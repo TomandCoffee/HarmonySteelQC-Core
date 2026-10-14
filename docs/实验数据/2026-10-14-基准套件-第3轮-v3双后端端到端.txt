@@ -1,0 +1,100 @@
+# 归档说明（本行非日志内容）：
+# 本轮为套件 v3「快速模式」双后端端到端对比（2026-10-14 20:50:40 – 20:50:53）。
+# 省略项（原文未逐字转录，内容可由汇总行等价表达）：
+#   · P2 的 WARM 逐次行（20 行）→ 保留 WARMSUM 两行
+#   · P7 的 CONS 逐图明细（30 行）→ 保留 CONSSUM 汇总行
+# 其余所有行均为原始日志逐字转录，未做任何修改。
+# 关键：本轮 P6 首次对**同一批 30 张图分别跑 nnrt 与 cpu**，用于回答
+#       "同一台机器上 NPU 是否实现（端到端）加速"。
+10-14 20:50:40.660 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: === BENCH BEGIN === mode=quick
+10-14 20:50:40.660 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: ENV chip=KirinT93 model=GEM-W40 os=OpenHarmony-7.0.0.105 api=26
+10-14 20:50:40.661 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: FIXED img=scratches_1.jpg
+10-14 20:50:40.860 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: INIT backend=nnrt ok=true initMs=198
+10-14 20:50:40.927 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: INIT backend=cpu ok=true initMs=67
+10-14 20:50:40.981 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BENCHINPUT nnrt=true cpu=true
+10-14 20:50:41.043 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: WARMSUM nnrt values=5.36,3.90,7.13,5.10,4.32,3.36,5.17,6.25,4.59,4.53
+10-14 20:50:41.279 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: WARMSUM cpu values=25.31,25.38,26.16,16.50,20.22,24.95,21.65,23.38,23.09,21.86
+10-14 20:50:41.329 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: OUTREAD nnrt kind=plain n=5 med=4.03
+10-14 20:50:41.330 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: OUTREAD nnrt kind=withOutput n=5 med=3.80
+10-14 20:50:41.524 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: OUTREAD cpu kind=plain n=5 med=20.51
+10-14 20:50:41.524 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: OUTREAD cpu kind=withOutput n=5 med=18.69
+10-14 20:50:41.777 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: STEADY nnrt n=50 min=2.44 med=4.30 max=20.35 mean=4.64
+10-14 20:50:41.778 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: STEADYRAW nnrt values=3.64,3.87,20.35,3.50,4.11,3.38,4.07,5.20,4.01,4.89,3.92,4.64,3.61,4.12,5.16,2.87,4.01,5.25,3.92,5.17,2.44,4.52,3.31,3.72,4.26,2.84,3.94,4.16,4.40,5.37,4.26,4.28,4.78,5.64,4.54,4.52,3.67,5.00,4.76,4.93,4.87,5.47,4.30,3.98,4.88,4.90,4.49,4.58,5.12,4.18
+10-14 20:50:42.602 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: STEADY cpu n=50 min=12.27 med=15.82 max=29.50 mean=16.02
+10-14 20:50:42.602 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: STEADYRAW cpu values=29.50,16.01,14.31,15.17,17.39,14.44,16.28,14.98,15.83,13.52,13.89,17.10,17.80,21.29,16.11,16.11,18.55,13.07,17.27,18.02,15.43,16.83,19.38,17.84,15.98,22.43,17.25,14.75,14.01,18.64,14.84,12.50,13.14,13.92,12.86,13.17,15.24,17.31,14.54,14.75,15.89,15.82,13.92,17.15,14.53,12.27,15.61,13.56,16.86,14.19
+10-14 20:50:42.698 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=1 nnrt n=20 min=2.61 med=4.36 max=7.20 mean=4.37
+10-14 20:50:43.028 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=1 cpu n=20 min=13.31 med=14.84 max=23.12 mean=15.94
+10-14 20:50:43.129 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=2 nnrt n=20 min=2.81 med=4.48 max=7.31 mean=4.66
+10-14 20:50:43.467 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=2 cpu n=20 min=12.87 med=15.55 max=25.87 mean=16.39
+10-14 20:50:43.569 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=3 nnrt n=20 min=2.95 med=4.77 max=8.88 mean=4.87
+10-14 20:50:43.881 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: BLOCK round=3 cpu n=20 min=10.93 med=14.76 max=30.20 mean=15.14
+10-14 20:50:43.926 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=crazing_1.jpg decode=2.00 readback=1.00 loop=27.00 infer=4.00 nms=1.00 total=35.18 boxes=0
+10-14 20:50:43.973 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=crazing_2.jpg decode=7.00 readback=1.00 loop=25.00 infer=12.00 nms=0.00 total=45.78 boxes=0
+10-14 20:50:44.007 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=crazing_3.jpg decode=2.00 readback=0.00 loop=19.00 infer=11.00 nms=1.00 total=34.51 boxes=0
+10-14 20:50:44.042 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=crazing_4.jpg decode=9.00 readback=1.00 loop=19.00 infer=5.00 nms=1.00 total=34.54 boxes=0
+10-14 20:50:44.087 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=crazing_5.jpg decode=5.00 readback=0.00 loop=25.00 infer=4.00 nms=1.00 total=35.33 boxes=1
+10-14 20:50:44.127 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=inclusion_1.jpg decode=2.00 readback=0.00 loop=22.00 infer=3.00 nms=1.00 total=29.25 boxes=5
+10-14 20:50:44.168 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=inclusion_2.jpg decode=4.00 readback=0.00 loop=22.00 infer=3.00 nms=1.00 total=31.45 boxes=3
+10-14 20:50:44.205 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=inclusion_3.jpg decode=2.00 readback=0.00 loop=22.00 infer=11.00 nms=1.00 total=36.09 boxes=4
+10-14 20:50:44.241 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=inclusion_4.jpg decode=2.00 readback=0.00 loop=20.00 infer=12.00 nms=1.00 total=35.48 boxes=3
+10-14 20:50:44.288 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=inclusion_5.jpg decode=17.00 readback=0.00 loop=22.00 infer=5.00 nms=0.00 total=45.80 boxes=5
+10-14 20:50:44.331 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=patches_1.jpg decode=12.00 readback=1.00 loop=24.00 infer=5.00 nms=0.00 total=42.12 boxes=1
+10-14 20:50:44.371 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=patches_2.jpg decode=2.00 readback=0.00 loop=23.00 infer=12.00 nms=1.00 total=39.22 boxes=3
+10-14 20:50:44.407 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=patches_3.jpg decode=1.00 readback=0.00 loop=20.00 infer=11.00 nms=1.00 total=34.62 boxes=3
+10-14 20:50:44.442 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=patches_4.jpg decode=10.00 readback=0.00 loop=19.00 infer=3.00 nms=1.00 total=34.48 boxes=2
+10-14 20:50:44.484 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=patches_5.jpg decode=5.00 readback=0.00 loop=21.00 infer=6.00 nms=1.00 total=33.64 boxes=3
+10-14 20:50:44.524 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=pitted_surface_1.jpg decode=5.00 readback=0.00 loop=21.00 infer=13.00 nms=2.00 total=40.79 boxes=2
+10-14 20:50:44.562 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=pitted_surface_2.jpg decode=9.00 readback=0.00 loop=22.00 infer=4.00 nms=1.00 total=36.66 boxes=2
+10-14 20:50:44.599 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=pitted_surface_3.jpg decode=2.00 readback=0.00 loop=21.00 infer=12.00 nms=0.00 total=36.10 boxes=2
+10-14 20:50:44.641 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=pitted_surface_4.jpg decode=6.00 readback=0.00 loop=22.00 infer=12.00 nms=0.00 total=40.61 boxes=1
+10-14 20:50:44.679 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=pitted_surface_5.jpg decode=8.00 readback=0.00 loop=21.00 infer=7.00 nms=0.00 total=36.86 boxes=1
+10-14 20:50:44.719 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=rolled-in_scale_1.jpg decode=1.00 readback=2.00 loop=21.00 infer=11.00 nms=1.00 total=37.49 boxes=1
+10-14 20:50:44.757 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=rolled-in_scale_2.jpg decode=3.00 readback=0.00 loop=21.00 infer=11.00 nms=1.00 total=37.40 boxes=0
+10-14 20:50:44.793 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=rolled-in_scale_3.jpg decode=8.00 readback=1.00 loop=21.00 infer=4.00 nms=1.00 total=35.52 boxes=0
+10-14 20:50:44.833 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=rolled-in_scale_4.jpg decode=6.00 readback=0.00 loop=21.00 infer=11.00 nms=1.00 total=39.77 boxes=0
+10-14 20:50:44.869 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=rolled-in_scale_5.jpg decode=2.00 readback=0.00 loop=21.00 infer=11.00 nms=0.00 total=35.15 boxes=0
+10-14 20:50:44.905 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=scratches_1.jpg decode=2.00 readback=0.00 loop=20.00 infer=11.00 nms=0.00 total=34.09 boxes=1
+10-14 20:50:44.941 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=scratches_2.jpg decode=2.00 readback=0.00 loop=20.00 infer=12.00 nms=0.00 total=35.74 boxes=1
+10-14 20:50:44.976 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=scratches_3.jpg decode=9.00 readback=0.00 loop=21.00 infer=4.00 nms=1.00 total=35.37 boxes=2
+10-14 20:50:45.019 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=scratches_4.jpg decode=4.00 readback=0.00 loop=21.00 infer=6.00 nms=0.00 total=32.29 boxes=1
+10-14 20:50:45.054 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=nnrt img=scratches_5.jpg decode=2.00 readback=0.00 loop=20.00 infer=12.00 nms=1.00 total=35.47 boxes=1
+10-14 20:50:45.054 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2ESUM backend=nnrt n=30 decode_med=4.00 readback_med=0.00 loop_med=21.00 infer_med=11.00 nms_med=1.00 total_med=35.52
+10-14 20:50:45.098 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=crazing_1.jpg decode=2.00 readback=0.00 loop=19.00 infer=20.00 nms=1.00 total=42.12 boxes=0
+10-14 20:50:45.149 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=crazing_2.jpg decode=2.00 readback=0.00 loop=22.00 infer=25.00 nms=1.00 total=51.40 boxes=0
+10-14 20:50:45.213 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=crazing_3.jpg decode=8.00 readback=0.00 loop=23.00 infer=29.00 nms=1.00 total=61.43 boxes=0
+10-14 20:50:45.270 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=crazing_4.jpg decode=4.00 readback=0.00 loop=26.00 infer=25.00 nms=1.00 total=56.68 boxes=0
+10-14 20:50:45.329 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=crazing_5.jpg decode=1.00 readback=0.00 loop=26.00 infer=30.00 nms=1.00 total=58.26 boxes=1
+10-14 20:50:45.397 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=inclusion_1.jpg decode=2.00 readback=0.00 loop=28.00 infer=34.00 nms=1.00 total=66.50 boxes=5
+10-14 20:50:45.464 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=inclusion_2.jpg decode=3.00 readback=0.00 loop=28.00 infer=34.00 nms=1.00 total=66.29 boxes=3
+10-14 20:50:45.525 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=inclusion_3.jpg decode=2.00 readback=0.00 loop=27.00 infer=31.00 nms=0.00 total=61.41 boxes=4
+10-14 20:50:45.591 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=inclusion_4.jpg decode=3.00 readback=0.00 loop=30.00 infer=30.00 nms=1.00 total=65.24 boxes=3
+10-14 20:50:45.666 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=inclusion_5.jpg decode=13.00 readback=0.00 loop=25.00 infer=35.00 nms=2.00 total=75.14 boxes=5
+10-14 20:50:45.733 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=patches_1.jpg decode=2.00 readback=2.00 loop=26.00 infer=35.00 nms=1.00 total=65.84 boxes=1
+10-14 20:50:45.797 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=patches_2.jpg decode=3.00 readback=0.00 loop=25.00 infer=34.00 nms=2.00 total=63.87 boxes=3
+10-14 20:50:45.861 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=patches_3.jpg decode=4.00 readback=0.00 loop=29.00 infer=29.00 nms=1.00 total=63.28 boxes=3
+10-14 20:50:45.933 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=patches_4.jpg decode=3.00 readback=2.00 loop=27.00 infer=37.00 nms=0.00 total=70.22 boxes=2
+10-14 20:50:45.997 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=patches_5.jpg decode=4.00 readback=0.00 loop=25.00 infer=32.00 nms=1.00 total=63.71 boxes=3
+10-14 20:50:46.059 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=pitted_surface_1.jpg decode=3.00 readback=0.00 loop=29.00 infer=29.00 nms=0.00 total=61.03 boxes=2
+10-14 20:50:46.108 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=pitted_surface_2.jpg decode=3.00 readback=0.00 loop=27.00 infer=13.00 nms=1.00 total=46.47 boxes=2
+10-14 20:50:46.163 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=pitted_surface_3.jpg decode=11.00 readback=1.00 loop=21.00 infer=21.00 nms=0.00 total=54.27 boxes=2
+10-14 20:50:46.225 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=pitted_surface_4.jpg decode=2.00 readback=0.00 loop=27.00 infer=32.00 nms=1.00 total=61.37 boxes=1
+10-14 20:50:46.291 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=pitted_surface_5.jpg decode=15.00 readback=0.00 loop=23.00 infer=26.00 nms=1.00 total=65.01 boxes=1
+10-14 20:50:46.371 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=rolled-in_scale_1.jpg decode=16.00 readback=0.00 loop=25.00 infer=37.00 nms=1.00 total=79.13 boxes=1
+10-14 20:50:46.433 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=rolled-in_scale_2.jpg decode=3.00 readback=0.00 loop=25.00 infer=33.00 nms=0.00 total=61.22 boxes=0
+10-14 20:50:46.495 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=rolled-in_scale_3.jpg decode=3.00 readback=0.00 loop=26.00 infer=32.00 nms=0.00 total=61.04 boxes=0
+10-14 20:50:46.561 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=rolled-in_scale_4.jpg decode=3.00 readback=1.00 loop=27.00 infer=33.00 nms=1.00 total=66.75 boxes=0
+10-14 20:50:46.631 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=rolled-in_scale_5.jpg decode=4.00 readback=0.00 loop=29.00 infer=35.00 nms=1.00 total=69.41 boxes=0
+10-14 20:50:46.697 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=scratches_1.jpg decode=2.00 readback=0.00 loop=28.00 infer=34.00 nms=0.00 total=64.84 boxes=1
+10-14 20:50:46.764 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=scratches_2.jpg decode=2.00 readback=1.00 loop=27.00 infer=35.00 nms=1.00 total=66.83 boxes=1
+10-14 20:50:46.832 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=scratches_3.jpg decode=3.00 readback=0.00 loop=27.00 infer=35.00 nms=1.00 total=67.35 boxes=2
+10-14 20:50:46.894 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=scratches_4.jpg decode=2.00 readback=0.00 loop=28.00 infer=30.00 nms=1.00 total=61.31 boxes=1
+10-14 20:50:46.956 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2E backend=cpu img=scratches_5.jpg decode=3.00 readback=0.00 loop=26.00 infer=30.00 nms=0.00 total=60.63 boxes=1
+10-14 20:50:46.956 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: E2ESUM backend=cpu n=30 decode_med=3.00 readback_med=0.00 loop_med=27.00 infer_med=32.00 nms_med=1.00 total_med=63.71
+10-14 20:50:48.848 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: VAR variant=0 n=20 convert_med=22.00 readback_med=0.00 loop_med=22.00
+10-14 20:50:48.848 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: VAR variant=1 n=20 convert_med=20.00 readback_med=0.00 loop_med=20.00
+10-14 20:50:48.848 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: VAR variant=2 n=20 convert_med=23.00 readback_med=0.00 loop_med=23.00
+10-14 20:50:52.193 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: CONSSUM images=30 mismatch=0 rate=0.000
+10-14 20:50:52.727 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: THREAD threads=2 n=20 min=19.31 med=21.42 max=32.44 mean=22.59
+10-14 20:50:53.094 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: THREAD threads=4 n=20 min=12.56 med=14.26 max=21.05 mean=14.51
+10-14 20:50:53.516 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: THREAD threads=8 n=20 min=15.14 med=17.22 max=23.29 mean=17.58
+10-14 20:50:53.517 54228 54228 I A00000/com.zjsrtp.steelqc/STEELQC_BENCH: === BENCH END ===
