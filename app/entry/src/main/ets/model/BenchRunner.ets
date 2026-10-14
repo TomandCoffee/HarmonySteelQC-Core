@@ -1,39 +1,38 @@
 /**
- * 端侧推理基准测试套件（一键跑，输出走 hilog，TAG = STEELQC_BENCH）
+ * 端侧推理基准测试套件 v2（一键跑，输出走 hilog，TAG = STEELQC_BENCH）
  *
  * ────────────────────────────────────────────────────────────────────
- * 为什么要有它
+ * v2 相对 v1 的增强（全部由 v1 的数据分析倒推出来）
  * ────────────────────────────────────────────────────────────────────
- * 手点「重新检测」测不出可信数据：
- *   · 掐不准间隔（而实测表明"距上次推理多久"直接决定耗时：0.7 s → 4~6 ms，
- *     10~18 s → 14~16 ms，2.7 min → 71 ms，设备首次 → 413 ms）
- *   · 单次样本无法区分"稳态"与"离群"
- *   · 两个后端必须吃**同一份输入**、且在**同一台设备同一进程**内交错测，
- *     否则又是跨口径 / 跨设备比较（本项目已经栽过两次）
+ *   1. convertMs 拆两段：readback（像素回读） / loop（逐像素循环）
+ *      —— v1 的 21 ms 是两个来源混在一起的，不拆就不知道该优化哪一段
+ *   2. 前处理 3 种实现 A/B（原实现 / Uint32+位运算+乘法 / 查表）
+ *      —— 同一版里直接比，省掉"改一版测一次"的两轮会话
+ *   3. 纳秒时钟（systemDateTime.getTime(true)）：v1 用 Date.now()，对 4 ms 级
+ *      测量有 ±25% 量化误差
+ *   4. 输出读取口径对照：只等 Promise vs 读输出张量 → 判定 predict 是否"假快"
+ *   5. 空闲扫描每档 3 次取中位（v1 只有 1 个样本，cpu 曲线非单调无法判读）
+ *   6. 端到端扩到 30 张（每类 5 张），v1 每类只有 1 张
+ *   7. 大图端到端：设备上自造 1280×960 / 2560×1920 JPEG，量化"取图分辨率"的代价
+ *   8. 批量吞吐 50 张：核对 README 的吞吐声明
+ *   9. 会话内稳态复测：检验可重复性
  *
  * ────────────────────────────────────────────────────────────────────
- * 测什么（按顺序，约 4 分钟）
+ * 两种模式
  * ────────────────────────────────────────────────────────────────────
- *   P0 环境     ：机型 / API / 模型字节数
- *   P1 后端初始化：nnrt 与 cpu 各起一个模型实例，各自报告 backend 名与初始化耗时
- *   P2 预热曲线 ：各 10 次连续推理，**逐次**记录（不丢弃 —— 冷启动本身是指标）
- *   P3 稳态     ：各 50 次连续推理（记录全部原始值 + min/med/max/mean）
- *   P4 空闲扫描 ：间隔 0.5 / 2 / 5 / 10 / 30 / 60 秒后各推理一次（产品真实节奏）
- *   P5 交错块   ：ABABAB 各 3 轮 × 20 次（抗热漂移，配对比较用）
- *   P6 端到端分段：6 张图（每类 1 张）拆 decode / convert / infer / nms 四段
- *   P7 后端一致性：每类 5 张共 30 张，两后端各跑一次，逐框比对
- *   P8 CPU 线程 ：2 / 4 / 8 线程各 20 次（配置敏感性）
+ *   完整（约 9 分钟）：P0–P11 全跑
+ *   快速（约 1 分钟）：跳过空闲扫描 / 大图 / 批量 / 复测，只留核心对照
  *
  * ────────────────────────────────────────────────────────────────────
- * 口径纪律（写在代码里，避免以后又混）
+ * 口径纪律
  * ────────────────────────────────────────────────────────────────────
- *   · infer  = 仅 model.predict() 的耗时（纯推理）
- *   · e2e    = detect() 全程（解码+缩放+转 NCHW+推理+NMS）
- *   · 两者永不同框比较；P2/P3/P4/P5 全是纯推理，P6 才是分段/端到端
+ *   · infer = 仅 model.predict()；e2e = detect() 全程；两者永不同框比较
+ *   · 纯推理阶段共用同一份预解码输入（不把解码/转换混进去）
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { resourceManager } from '@kit.LocalizationKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { image } from '@kit.ImageKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { MindSporeLiteDetector } from './MindSporeLiteDetector';
@@ -50,16 +49,20 @@ const STEADY_N: number = 50;
 const BLOCK_N: number = 20;
 const BLOCK_ROUNDS: number = 3;
 const IDLE_GAPS: number[] = [0.5, 2, 5, 10, 30, 60];
-const CPU_THREAD_SET: number[] = [2, 4, 8];
+const IDLE_REPEAT: number = 3;
 const CONS_PER_CLASS: number = 5;
+const E2E_PER_CLASS: number = 5;
+const CPU_THREAD_SET: number[] = [2, 4, 8];
+const VARIANTS: number[] = [0, 1, 2];
+const VAR_N: number = 20;
+const OUTREAD_N: number = 5;
+const BIG_IMAGES: string[] = ['1280x960', '2560x1920'];
+const BIG_N: number = 5;
 const CLASSES: string[] = ['crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'];
 
 export interface BenchProgress {
-  /** 阶段名，如 'P3 稳态' */
   phase: string;
-  /** 当前明细，如 'nnrt 23/50' */
   detail: string;
-  /** 本条日志原文（界面可滚动显示，便于截图） */
   line: string;
 }
 
@@ -99,19 +102,35 @@ export class BenchRunner {
     });
   }
 
-  /** 统计摘要（中位数取上中位，样本量为偶数时如此约定） */
+  /** 统计摘要（毫秒保留两位小数；中位数取上中位，偶数样本时如此约定） */
   private stat(values: number[]): string {
-    if (values.length === 0) {
+    const v: number[] = values.filter((x: number) => x >= 0).sort((a: number, b: number) => a - b);
+    if (v.length === 0) {
       return 'n=0';
     }
-    const sorted: number[] = values.slice().sort((a: number, b: number) => a - b);
     let sum: number = 0;
-    for (let i = 0; i < values.length; i++) {
-      sum += values[i];
+    for (let i = 0; i < v.length; i++) {
+      sum += v[i];
     }
-    const med: number = sorted[Math.floor(sorted.length / 2)];
-    return `n=${values.length} min=${sorted[0]} med=${med} max=${sorted[sorted.length - 1]}`
-      + ` mean=${(sum / values.length).toFixed(1)}`;
+    const med: number = v[Math.floor(v.length / 2)];
+    return `n=${v.length} min=${v[0].toFixed(2)} med=${med.toFixed(2)}`
+      + ` max=${v[v.length - 1].toFixed(2)} mean=${(sum / v.length).toFixed(2)}`;
+  }
+
+  private median(values: number[]): number {
+    const v: number[] = values.filter((x: number) => x >= 0).sort((a: number, b: number) => a - b);
+    if (v.length === 0) {
+      return -1;
+    }
+    return v[Math.floor(v.length / 2)];
+  }
+
+  private fmt(values: number[]): string {
+    const parts: string[] = [];
+    for (let i = 0; i < values.length; i++) {
+      parts.push(values[i].toFixed(2));
+    }
+    return parts.join(',');
   }
 
   /** 把 rawfile 图落盘到沙箱并返回 file:// URI（重复调用只写一次） */
@@ -130,6 +149,64 @@ export class BenchRunner {
     return 'file://' + p;
   }
 
+  /**
+   * 设备上自造大图：把小图放大后重新编码成 JPEG。
+   *
+   * 为什么需要：包内只有 200×200 的图，而真实拍照是数兆像素 ——
+   * 解码与缩放的代价完全不可比。这里用"放大 + 重编码"造出真实分辨率的大图：
+   * **分辨率是真的**（JPEG 解码开销随分辨率增长），内容清晰与否不影响计时。
+   */
+  private async makeLargeJpeg(srcUri: string, w: number, h: number): Promise<string> {
+    const p: string = `${this.filesDir}/bench_big_${w}x${h}.jpg`;
+    if (fileIo.accessSync(p)) {
+      return 'file://' + p;
+    }
+    let src: image.ImageSource | undefined = undefined;
+    let pm: image.PixelMap | undefined = undefined;
+    const file = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+    try {
+      src = image.createImageSource(file.fd);
+      const opts: image.DecodingOptions = {
+        desiredSize: { width: w, height: h },
+        editable: false,
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      };
+      pm = await src.createPixelMap(opts);
+      const packer: image.ImagePacker = image.createImagePacker();
+      const packOpts: image.PackingOption = { format: 'image/jpeg', quality: 90 };
+      const buf: ArrayBuffer = await packer.packing(pm, packOpts);
+      const out = fileIo.openSync(p, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+      try {
+        fileIo.writeSync(out.fd, buf);
+      } finally {
+        fileIo.closeSync(out);
+      }
+      await packer.release();
+      this.log(`BIGMAKE ${w}x${h} bytes=${buf.byteLength}`);
+      return 'file://' + p;
+    } finally {
+      if (pm !== undefined) {
+        try {
+          await pm.release();
+        } catch (e) {
+          // 忽略
+        }
+      }
+      if (src !== undefined) {
+        try {
+          await src.release();
+        } catch (e) {
+          // 忽略
+        }
+      }
+      try {
+        fileIo.closeSync(file);
+      } catch (e) {
+        // 忽略
+      }
+    }
+  }
+
   private boxesToString(boxes: Detection[]): string {
     if (boxes.length === 0) {
       return 'none';
@@ -145,16 +222,16 @@ export class BenchRunner {
 
   // ──────────────────────────── 主流程 ────────────────────────────
 
-  async run(): Promise<void> {
+  async run(quick: boolean = false): Promise<void> {
     this.stopped = false;
-    this.log('=== BENCH BEGIN ===', '启动', '');
+    this.log(`=== BENCH BEGIN === mode=${quick ? 'quick' : 'full'}`);
     this.log(`ENV chip=${String(deviceInfo.chipType)} model=${String(deviceInfo.productModel)}`
       + ` os=${String(deviceInfo.osFullName)} api=${String(deviceInfo.sdkApiVersion)}`);
     try {
       this.fixedUri = await this.localize(FIXED_IMG);
       this.log(`FIXED img=${FIXED_IMG}`);
 
-      // ── P1 后端初始化 ──
+      // ── P1 双后端初始化（强制指定，不回退）──
       this.notify({ phase: 'P1 初始化', detail: '加载 nnrt 后端', line: '' });
       this.nnrt = new MindSporeLiteDetector(this.mgr, 'nnrt');
       let t: number = Date.now();
@@ -182,41 +259,68 @@ export class BenchRunner {
         return;
       }
 
-      // ── P2 预热曲线 ──
+      // ── P2 预热曲线（逐次记录，不丢弃）──
       await this.warmup('nnrt', this.nnrt);
       await this.warmup('cpu', this.cpu);
+
+      // ── P2b 输出读取口径对照 ──
+      await this.outreadCheck('nnrt', this.nnrt);
+      await this.outreadCheck('cpu', this.cpu);
 
       // ── P3 稳态 ──
       await this.steady('nnrt', this.nnrt);
       await this.steady('cpu', this.cpu);
 
-      // ── P4 空闲间隔扫描 ──
-      for (let i = 0; i < IDLE_GAPS.length; i++) {
-        if (this.stopped) { break; }
-        await this.idle('nnrt', this.nnrt, IDLE_GAPS[i]);
-        await this.idle('cpu', this.cpu, IDLE_GAPS[i]);
+      // ── P4 空闲间隔扫描（快速模式跳过）──
+      if (!quick) {
+        for (let i = 0; i < IDLE_GAPS.length; i++) {
+          if (this.stopped) {
+            break;
+          }
+          await this.idleSweep('nnrt', this.nnrt, IDLE_GAPS[i]);
+          await this.idleSweep('cpu', this.cpu, IDLE_GAPS[i]);
+        }
       }
 
       // ── P5 交错块（ABABAB）──
       for (let r = 1; r <= BLOCK_ROUNDS; r++) {
-        if (this.stopped) { break; }
+        if (this.stopped) {
+          break;
+        }
         await this.block('nnrt', this.nnrt, r);
         await this.block('cpu', this.cpu, r);
       }
 
-      // ── P6 端到端分段 ──
+      // ── P6 端到端分段（每类 5 张，共 30 张）──
       if (!this.stopped) {
         await this.e2eSegments();
       }
 
-      // ── P7 后端一致性 ──
+      // ── P6b 前处理实现变体 A/B（同机同输入交错）──
+      if (!this.stopped) {
+        await this.convertVariants();
+      }
+
+      // ── P7 后端一致性（30 张）──
       if (!this.stopped) {
         await this.consistency();
       }
 
-      // ── P8 CPU 线程敏感性 ──
+      // ── P8 CPU 线程扫描 ──
       if (!this.stopped) {
         await this.threadSweep();
+      }
+
+      // ── P9 大图 / P10 批量吞吐 / P11 稳态复测（快速模式跳过）──
+      if (!quick && !this.stopped) {
+        await this.largeImages();
+      }
+      if (!quick && !this.stopped) {
+        await this.batchThroughput();
+      }
+      if (!quick && !this.stopped) {
+        await this.steady('nnrt', this.nnrt, 'REPEAT');
+        await this.steady('cpu', this.cpu, 'REPEAT');
       }
     } catch (err) {
       const e = err as BusinessError;
@@ -225,101 +329,197 @@ export class BenchRunner {
     this.log('=== BENCH END ===', '结束', '');
   }
 
-  // ──────────────────────────── 各阶段实现 ────────────────────────────
+  // ──────────────────────────── 各阶段 ────────────────────────────
 
   /** P2：预热曲线，逐次记录 */
   private async warmup(tag: string, det: MindSporeLiteDetector): Promise<void> {
     const values: number[] = [];
     for (let i = 1; i <= WARMUP_N; i++) {
-      if (this.stopped) { return; }
+      if (this.stopped) {
+        return;
+      }
       const ms: number = await det.benchInfer();
       values.push(ms);
-      this.log(`WARM ${tag} i=${i} infer=${ms}`, 'P2 预热', `${tag} ${i}/${WARMUP_N}`);
+      this.log(`WARM ${tag} i=${i} infer=${ms.toFixed(2)}`, 'P2 预热', `${tag} ${i}/${WARMUP_N}`);
     }
-    this.log(`WARMSUM ${tag} values=${values.join(',')}`);
+    this.log(`WARMSUM ${tag} values=${this.fmt(values)}`);
   }
 
-  /** P3：稳态，记录全部原始值 */
-  private async steady(tag: string, det: MindSporeLiteDetector): Promise<void> {
+  /** P2b：只等 Promise vs 读输出张量 —— 判定 predict 是否"真算完才 resolve" */
+  private async outreadCheck(tag: string, det: MindSporeLiteDetector): Promise<void> {
+    const plain: number[] = [];
+    const withOut: number[] = [];
+    for (let i = 0; i < OUTREAD_N; i++) {
+      if (this.stopped) {
+        return;
+      }
+      plain.push(await det.benchInfer());
+      withOut.push(await det.benchInferWithOutput());
+      this.notify({ phase: 'P2b 口径对照', detail: `${tag} ${i + 1}/${OUTREAD_N}`, line: '' });
+    }
+    this.log(`OUTREAD ${tag} kind=plain n=${OUTREAD_N} med=${this.median(plain).toFixed(2)}`);
+    this.log(`OUTREAD ${tag} kind=withOutput n=${OUTREAD_N} med=${this.median(withOut).toFixed(2)}`);
+  }
+
+  /** P3 / P11：稳态（prefix=REPEAT 表示会话内复测） */
+  private async steady(tag: string, det: MindSporeLiteDetector, prefix: string = 'STEADY'): Promise<void> {
     const values: number[] = [];
     for (let i = 1; i <= STEADY_N; i++) {
-      if (this.stopped) { return; }
+      if (this.stopped) {
+        return;
+      }
       values.push(await det.benchInfer());
-      this.notify({ phase: 'P3 稳态', detail: `${tag} ${i}/${STEADY_N}`, line: '' });
+      this.notify({
+        phase: prefix === 'REPEAT' ? 'P11 复测' : 'P3 稳态',
+        detail: `${tag} ${i}/${STEADY_N}`, line: ''
+      });
     }
-    this.log(`STEADY ${tag} ${this.stat(values)}`);
-    this.log(`STEADYRAW ${tag} values=${values.join(',')}`);
+    this.log(`${prefix} ${tag} ${this.stat(values)}`);
+    this.log(`${prefix}RAW ${tag} values=${this.fmt(values)}`);
   }
 
-  /** P4：空闲 gap 秒后推理一次 */
-  private async idle(tag: string, det: MindSporeLiteDetector, gapSec: number): Promise<void> {
-    this.notify({ phase: 'P4 空闲扫描', detail: `${tag} 等待 ${gapSec}s`, line: '' });
-    await this.sleep(Math.round(gapSec * 1000));
-    if (this.stopped) { return; }
-    const ms: number = await det.benchInfer();
-    this.log(`IDLE ${tag} gapSec=${gapSec} infer=${ms}`, 'P4 空闲扫描', `${tag} gap=${gapSec}s`);
+  /** P4：某档间隔重复 IDLE_REPEAT 次，报单次与中位 */
+  private async idleSweep(tag: string, det: MindSporeLiteDetector, gapSec: number): Promise<void> {
+    const values: number[] = [];
+    for (let k = 1; k <= IDLE_REPEAT; k++) {
+      this.notify({ phase: 'P4 空闲扫描', detail: `${tag} 档 ${gapSec}s 第 ${k}/${IDLE_REPEAT} 次（等待中）`, line: '' });
+      await this.sleep(Math.round(gapSec * 1000));
+      if (this.stopped) {
+        return;
+      }
+      const ms: number = await det.benchInfer();
+      values.push(ms);
+      this.log(`IDLE ${tag} gapSec=${gapSec} iter=${k} infer=${ms.toFixed(2)}`,
+        'P4 空闲扫描', `${tag} gap=${gapSec}s ${k}/${IDLE_REPEAT}`);
+    }
+    this.log(`IDLESUM ${tag} gapSec=${gapSec} n=${values.length} med=${this.median(values).toFixed(2)}`);
   }
 
-  /** P5：交错块，一次 20 次连续推理 */
+  /** P5：交错块（每块 20 次连续推理） */
   private async block(tag: string, det: MindSporeLiteDetector, round: number): Promise<void> {
     const values: number[] = [];
     for (let i = 1; i <= BLOCK_N; i++) {
-      if (this.stopped) { return; }
+      if (this.stopped) {
+        return;
+      }
       values.push(await det.benchInfer());
       this.notify({ phase: 'P5 交错块', detail: `第${round}轮 ${tag} ${i}/${BLOCK_N}`, line: '' });
     }
-    this.log(`BLOCK round=${round} ${tag} ${this.stat(values)} values=${values.join(',')}`);
+    this.log(`BLOCK round=${round} ${tag} ${this.stat(values)} values=${this.fmt(values)}`);
   }
 
-  /** P6：端到端分段（每类 1 张，用 nnrt） */
+  /** P6：端到端分段（每类 5 张，共 30 张；nnrt） */
   private async e2eSegments(): Promise<void> {
-    if (this.nnrt === undefined) { return; }
+    if (this.nnrt === undefined) {
+      return;
+    }
+    const dec: number[] = [];
+    const rb: number[] = [];
+    const lp: number[] = [];
+    const inf: number[] = [];
+    const nms: number[] = [];
+    const tot: number[] = [];
     for (let c = 0; c < CLASSES.length; c++) {
-      if (this.stopped) { return; }
-      const name: string = `${CLASSES[c]}_1.jpg`;
-      this.notify({ phase: 'P6 端到端', detail: name, line: '' });
-      try {
-        const uri: string = await this.localize(name);
-        const res: DetectionResult = await this.nnrt.detect(uri);
-        const decode: number = (res.decodeMs === undefined) ? -1 : res.decodeMs;
-        const convert: number = (res.convertMs === undefined) ? -1 : res.convertMs;
-        const nms: number = (res.nmsMs === undefined) ? -1 : res.nmsMs;
-        this.log(`E2E img=${name} decode=${decode} convert=${convert} infer=${res.inferMs}`
-          + ` nms=${nms} total=${res.costMs} boxes=${res.boxes.length}`);
-      } catch (err) {
-        const e = err as BusinessError;
-        this.log(`E2E img=${name} FAILED ${e.message}`);
+      for (let k = 1; k <= E2E_PER_CLASS; k++) {
+        if (this.stopped) {
+          return;
+        }
+        const name: string = `${CLASSES[c]}_${k}.jpg`;
+        this.notify({ phase: 'P6 端到端', detail: name, line: '' });
+        try {
+          const uri: string = await this.localize(name);
+          const r: DetectionResult = await this.nnrt.detect(uri);
+          const d: number = (r.decodeMs === undefined) ? -1 : r.decodeMs;
+          const a: number = (r.readbackMs === undefined) ? -1 : r.readbackMs;
+          const l: number = (r.loopMs === undefined) ? -1 : r.loopMs;
+          const i: number = r.inferMs;
+          const n: number = (r.nmsMs === undefined) ? -1 : r.nmsMs;
+          const tt: number = r.costMs;
+          dec.push(d);
+          rb.push(a);
+          lp.push(l);
+          inf.push(i);
+          nms.push(n);
+          tot.push(tt);
+          this.log(`E2E img=${name} decode=${d} readback=${a} loop=${l} infer=${i}`
+            + ` nms=${n} total=${tt} boxes=${r.boxes.length}`);
+        } catch (err) {
+          const e = err as BusinessError;
+          this.log(`E2E img=${name} FAILED ${e.message}`);
+        }
       }
+    }
+    this.log(`E2ESUM n=${tot.length} decode_med=${this.median(dec).toFixed(2)}`
+      + ` readback_med=${this.median(rb).toFixed(2)} loop_med=${this.median(lp).toFixed(2)}`
+      + ` infer_med=${this.median(inf).toFixed(2)} nms_med=${this.median(nms).toFixed(2)}`
+      + ` total_med=${this.median(tot).toFixed(2)}`);
+  }
+
+  /** P6b：前处理三种实现交错对比（同机、同输入、同图） */
+  private async convertVariants(): Promise<void> {
+    if (this.nnrt === undefined) {
+      return;
+    }
+    const conv: number[][] = [[], [], []];
+    const rb: number[][] = [[], [], []];
+    const lp: number[][] = [[], [], []];
+    for (let i = 0; i < VAR_N; i++) {
+      for (let vi = 0; vi < VARIANTS.length; vi++) {
+        if (this.stopped) {
+          return;
+        }
+        const v: number = VARIANTS[vi];
+        this.nnrt.setConvertVariant(v);
+        try {
+          const r: DetectionResult = await this.nnrt.detect(this.fixedUri);
+          conv[vi].push((r.convertMs === undefined) ? -1 : r.convertMs);
+          rb[vi].push((r.readbackMs === undefined) ? -1 : r.readbackMs);
+          lp[vi].push((r.loopMs === undefined) ? -1 : r.loopMs);
+        } catch (err) {
+          const e = err as BusinessError;
+          this.log(`VAR variant=${v} FAILED ${e.message}`);
+        }
+        this.notify({ phase: 'P6b 前处理变体', detail: `第 ${i + 1}/${VAR_N} 轮 变体${v}`, line: '' });
+      }
+    }
+    this.nnrt.setConvertVariant(0);   // 复位，避免影响后续阶段
+    for (let vi = 0; vi < VARIANTS.length; vi++) {
+      this.log(`VAR variant=${VARIANTS[vi]} n=${conv[vi].length}`
+        + ` convert_med=${this.median(conv[vi]).toFixed(2)}`
+        + ` readback_med=${this.median(rb[vi]).toFixed(2)}`
+        + ` loop_med=${this.median(lp[vi]).toFixed(2)}`);
     }
   }
 
-  /** P7：两后端对同一批图的一致性 */
+  /** P7：两后端对同一批图的一致性（30 张） */
   private async consistency(): Promise<void> {
-    if (this.nnrt === undefined || this.cpu === undefined) { return; }
+    if (this.nnrt === undefined || this.cpu === undefined) {
+      return;
+    }
     let mismatch: number = 0;
-    let totalImages: number = 0;
+    let total: number = 0;
     for (let c = 0; c < CLASSES.length; c++) {
       for (let k = 1; k <= CONS_PER_CLASS; k++) {
-        if (this.stopped) { return; }
+        if (this.stopped) {
+          return;
+        }
         const name: string = `${CLASSES[c]}_${k}.jpg`;
         this.notify({ phase: 'P7 一致性', detail: name, line: '' });
         try {
           const uri: string = await this.localize(name);
           const a: DetectionResult = await this.nnrt.detect(uri);
           const b: DetectionResult = await this.cpu.detect(uri);
-          totalImages++;
-          const sameCount: boolean = a.boxes.length === b.boxes.length;
-          let sameCls: boolean = sameCount;
-          for (let i = 0; i < a.boxes.length && sameCls; i++) {
+          total++;
+          let same: boolean = a.boxes.length === b.boxes.length;
+          for (let i = 0; i < a.boxes.length && same; i++) {
             if (a.boxes[i].type !== b.boxes[i].type) {
-              sameCls = false;
+              same = false;
             }
           }
-          const ok: boolean = sameCount && sameCls;
-          if (!ok) {
+          if (!same) {
             mismatch++;
           }
-          this.log(`CONS img=${name} same=${ok}`
+          this.log(`CONS img=${name} same=${same}`
             + ` A=${this.boxesToString(a.boxes)} B=${this.boxesToString(b.boxes)}`);
         } catch (err) {
           const e = err as BusinessError;
@@ -327,14 +527,16 @@ export class BenchRunner {
         }
       }
     }
-    this.log(`CONSSUM images=${totalImages} mismatch=${mismatch}`
-      + ` rate=${totalImages === 0 ? -1 : (mismatch / totalImages).toFixed(3)}`);
+    this.log(`CONSSUM images=${total} mismatch=${mismatch}`
+      + ` rate=${total === 0 ? -1 : (mismatch / total).toFixed(3)}`);
   }
 
   /** P8：CPU 线程数敏感性 */
   private async threadSweep(): Promise<void> {
     for (let i = 0; i < CPU_THREAD_SET.length; i++) {
-      if (this.stopped) { return; }
+      if (this.stopped) {
+        return;
+      }
       const threads: number = CPU_THREAD_SET[i];
       this.notify({ phase: 'P8 线程', detail: `threads=${threads} 初始化`, line: '' });
       const det: MindSporeLiteDetector = new MindSporeLiteDetector(this.mgr, 'cpu');
@@ -350,12 +552,106 @@ export class BenchRunner {
       }
       const values: number[] = [];
       for (let k = 1; k <= BLOCK_N; k++) {
-        if (this.stopped) { return; }
+        if (this.stopped) {
+          return;
+        }
         values.push(await det.benchInfer());
         this.notify({ phase: 'P8 线程', detail: `threads=${threads} ${k}/${BLOCK_N}`, line: '' });
       }
-      this.log(`THREAD threads=${threads} ${this.stat(values)} values=${values.join(',')}`);
+      this.log(`THREAD threads=${threads} ${this.stat(values)} values=${this.fmt(values)}`);
       await det.release();
     }
+  }
+
+  /** P9：大图端到端（设备自造 JPEG，量化取图分辨率的代价） */
+  private async largeImages(): Promise<void> {
+    if (this.nnrt === undefined) {
+      return;
+    }
+    for (let bi = 0; bi < BIG_IMAGES.length; bi++) {
+      if (this.stopped) {
+        return;
+      }
+      const spec: string = BIG_IMAGES[bi];
+      const wh: string[] = spec.split('x');
+      const w: number = Number.parseInt(wh[0], 10);
+      const h: number = Number.parseInt(wh[1], 10);
+      this.notify({ phase: 'P9 大图', detail: `生成 ${spec}`, line: '' });
+      let uri: string = '';
+      try {
+        uri = await this.makeLargeJpeg(this.fixedUri, w, h);
+      } catch (err) {
+        const e = err as BusinessError;
+        this.log(`BIG img=${spec} MAKEFAILED ${e.message}`);
+        continue;
+      }
+      const dec: number[] = [];
+      const conv: number[] = [];
+      const inf: number[] = [];
+      const tot: number[] = [];
+      for (let k = 1; k <= BIG_N; k++) {
+        if (this.stopped) {
+          return;
+        }
+        this.notify({ phase: 'P9 大图', detail: `${spec} ${k}/${BIG_N}`, line: '' });
+        try {
+          const r: DetectionResult = await this.nnrt.detect(uri);
+          dec.push((r.decodeMs === undefined) ? -1 : r.decodeMs);
+          conv.push((r.convertMs === undefined) ? -1 : r.convertMs);
+          inf.push(r.inferMs);
+          tot.push(r.costMs);
+        } catch (err) {
+          const e = err as BusinessError;
+          this.log(`BIG img=${spec} FAILED ${e.message}`);
+        }
+      }
+      this.log(`BIG img=${spec} n=${tot.length} decode_med=${this.median(dec).toFixed(2)}`
+        + ` convert_med=${this.median(conv).toFixed(2)} infer_med=${this.median(inf).toFixed(2)}`
+        + ` total_med=${this.median(tot).toFixed(2)}`);
+    }
+  }
+
+  /** P10：批量吞吐（连续 50 张端到端，核对 README 的吞吐声明） */
+  private async batchThroughput(): Promise<void> {
+    if (this.nnrt === undefined) {
+      return;
+    }
+    const names: string[] = [];
+    for (let c = 0; c < CLASSES.length; c++) {
+      for (let k = 1; k <= 8; k++) {
+        names.push(`${CLASSES[c]}_${k}.jpg`);
+      }
+    }
+    names.push(`${CLASSES[0]}_9.jpg`);
+    names.push(`${CLASSES[0]}_10.jpg`);
+
+    // 文件准备不计入计时（localize 只写一次，重复调用直接返回）
+    const uris: string[] = [];
+    for (let i = 0; i < names.length; i++) {
+      if (this.stopped) {
+        return;
+      }
+      uris.push(await this.localize(names[i]));
+      this.notify({ phase: 'P10 批量', detail: `准备文件 ${i + 1}/${names.length}`, line: '' });
+    }
+
+    const t0: number = Date.now();
+    let ok: number = 0;
+    for (let i = 0; i < uris.length; i++) {
+      if (this.stopped) {
+        return;
+      }
+      try {
+        await this.nnrt.detect(uris[i]);
+        ok++;
+      } catch (err) {
+        const e = err as BusinessError;
+        this.log(`BATCH item=${names[i]} FAILED ${e.message}`);
+      }
+      this.notify({ phase: 'P10 批量', detail: `${i + 1}/${uris.length}`, line: '' });
+    }
+    const totalMs: number = Date.now() - t0;
+    this.log(`BATCH n=${ok} totalMs=${totalMs} avgMs=${(totalMs / Math.max(1, ok)).toFixed(2)}`
+      + ` perSec=${(ok * 1000 / Math.max(1, totalMs)).toFixed(2)}`);
   }
 }

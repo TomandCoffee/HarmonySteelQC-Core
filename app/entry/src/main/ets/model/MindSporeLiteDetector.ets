@@ -29,7 +29,7 @@ import { image } from '@kit.ImageKit';
 import { resourceManager } from '@kit.LocalizationKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, systemDateTime } from '@kit.BasicServicesKit';
 import { Detector } from './Detector';
 import { Detection, DetectionResult } from './DefectType';
 
@@ -87,6 +87,15 @@ interface Candidate {
   h: number;
 }
 
+/** 前处理结果：输入张量 + 两段耗时（供性能剖析与变体对比） */
+interface ConvertResult {
+  input: ArrayBuffer;
+  /** 像素回读耗时（ms） */
+  readbackMs: number;
+  /** 逐像素循环耗时（ms） */
+  loopMs: number;
+}
+
 export class MindSporeLiteDetector implements Detector {
   readonly backendName: string = 'MindSporeLite';
 
@@ -101,6 +110,35 @@ export class MindSporeLiteDetector implements Detector {
 
   /** 基准测试用的固定输入张量：解码一次后复用，避免把解码/转换混进纯推理计时 */
   private benchInput: ArrayBuffer | undefined = undefined;
+
+  /** 前处理实现变体（0 = 原实现；基准测试用于同机对比，默认不影响业务） */
+  private convertVariant: number = 0;
+
+  /** 256 项归一化查表（变体 2 用；静态只建一次） */
+  private static readonly LUT: Float32Array = MindSporeLiteDetector.buildLut();
+
+  private static buildLut(): Float32Array {
+    const t = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      t[i] = i / 255.0;
+    }
+    return t;
+  }
+
+  /**
+   * 高精度时钟（毫秒，带小数）。
+   *
+   * 为什么不用 Date.now()：它只有 1 ms 粒度，而我们测的是 4 ms 级的量 ——
+   * 单次测量的量化误差高达 ±25%。systemDateTime.getTime(true) 返回纳秒，
+   * 换算成毫秒能把这项误差降到可忽略。取不到时退回 Date.now()。
+   */
+  private nowMs(): number {
+    try {
+      return systemDateTime.getTime(true) / 1000000;
+    } catch (e) {
+      return Date.now();
+    }
+  }
 
   /**
    * 强制指定后端（对照实验用）；undefined = 默认行为（先 nnrt 后 cpu 回退）
@@ -119,6 +157,11 @@ export class MindSporeLiteDetector implements Detector {
   /** 设置 CPU 后端线程数（只影响 cpu 后端，须在 init() 之前调用） */
   setCpuThreads(n: number): void {
     this.cpuThreads = n;
+  }
+
+  /** 设置前处理实现变体（0/1/2；基准测试用） */
+  setConvertVariant(v: number): void {
+    this.convertVariant = v;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -326,11 +369,13 @@ export class MindSporeLiteDetector implements Detector {
     // 分段打点（供性能剖析：定位瓶颈到底在解码/转换/推理/后处理哪一段）
     let decodeMs: number = 0;
     let convertMs: number = 0;
+    let readbackMs: number = 0;
+    let loopMs: number = 0;
     let nmsMs: number = 0;
 
     try {
       // 1. 打开并解码图片（decodeMs 覆盖：打开 + 读图信息 + 解码并按 desiredSize 缩放）
-      const tDecode: number = Date.now();
+      const tDecode: number = this.nowMs();
       file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       src = image.createImageSource(file.fd);
 
@@ -345,12 +390,14 @@ export class MindSporeLiteDetector implements Detector {
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
       };
       pm = await src.createPixelMap(opts);
-      decodeMs = Date.now() - tDecode;
+      decodeMs = this.nowMs() - tDecode;
 
-      // 3. 读像素 → NCHW float32 [0,1]
-      const tConvert: number = Date.now();
-      const inputBuf: ArrayBuffer = await this.toModelInput(pm);
-      convertMs = Date.now() - tConvert;
+      // 3. 读像素 → NCHW float32 [0,1]（分两段计时：像素回读 / 逐像素循环）
+      const conv: ConvertResult = await this.toModelInputTimed(pm);
+      const inputBuf: ArrayBuffer = conv.input;
+      readbackMs = conv.readbackMs;
+      loopMs = conv.loopMs;
+      convertMs = readbackMs + loopMs;
 
       // 4. 推理
       // getInputs() 必须判空：NPU 后端下它可能返回 undefined
@@ -360,32 +407,34 @@ export class MindSporeLiteDetector implements Detector {
         throw new Error(`无法获取模型输入张量（后端 ${this.actualTarget}）`);
       }
       inputs[0].setData(inputBuf);
-      const tInfer: number = Date.now();
+      const tInfer: number = this.nowMs();
       const outputs: mindSporeLite.MSTensor[] = await this.model.predict(inputs);
-      const inferMs: number = Date.now() - tInfer;
+      const inferMs: number = this.nowMs() - tInfer;
 
       // 5. 后处理：解码 + NMS
       if (outputs === undefined || outputs.length === 0) {
         throw new Error('模型推理未返回输出张量');
       }
       const raw = new Float32Array(outputs[0].getData());
-      const tNms: number = Date.now();
+      const tNms: number = this.nowMs();
       const boxes: Detection[] = this.postprocess(raw, srcW, srcH);
-      nmsMs = Date.now() - tNms;
+      nmsMs = this.nowMs() - tNms;
 
       hilog.info(DOMAIN, TAG, '推理 %{public}d ms, 检出 %{public}d 个, 原图 %{public}dx%{public}d',
-        inferMs, boxes.length, srcW, srcH);
+        Math.round(inferMs), boxes.length, srcW, srcH);
 
       return {
         boxes: boxes,
-        costMs: Date.now() - start,
-        inferMs: inferMs,
+        costMs: this.nowMs() - start,
+        inferMs: Math.round(inferMs),
         imageWidth: srcW,
         imageHeight: srcH,
         backend: `${this.backendName}-${this.actualTarget}`,
-        decodeMs: decodeMs,
-        convertMs: convertMs,
-        nmsMs: nmsMs
+        decodeMs: Math.round(decodeMs),
+        convertMs: Math.round(convertMs),
+        readbackMs: Math.round(readbackMs),
+        loopMs: Math.round(loopMs),
+        nmsMs: Math.round(nmsMs)
       };
     } finally {
       if (pm !== undefined) {
@@ -417,26 +466,66 @@ export class MindSporeLiteDetector implements Detector {
   // ────────────────────────────────────────────────────────────────
 
   private async toModelInput(pm: image.PixelMap): Promise<ArrayBuffer> {
-    // 读 RGBA8888 数据
+    return (await this.toModelInputTimed(pm)).input;
+  }
+
+  /**
+   * RGBA→NCHW 转换（带分段计时）
+   *
+   * ⚠️ 为什么必须拆成两段计时：
+   *   原来只报一个 convertMs，但那个数字里混了两件完全不同的事 ——
+   *   ① readPixelsToBuffer：把解码后的像素**回读**到内存（可能含解码/GPU 回读等待）
+   *   ② ArkTS 逐像素循环：102,400 次写 Float32Array
+   *   不区分就无从判断"该优化循环还是该换回读路径"，属于没定位到行就动刀。
+   *
+   * 变体（由 convertVariant 选择，基准测试用于同机对比）：
+   *   0 = 当前实现：Uint8 逐像素 + 三次 `/255.0` 除法
+   *   1 = Uint32 一次读 4 字节 + 位运算取通道 + 预先算好的乘法（避免除法）
+   *   2 = 查表法：预计算 256 项归一化浮点表，循环里只做查表与写入
+   */
+  private async toModelInputTimed(pm: image.PixelMap): Promise<ConvertResult> {
     const byteCount: number = MODEL_SIZE * MODEL_SIZE * 4;
     const rgba = new ArrayBuffer(byteCount);
+    const tRead: number = this.nowMs();
     await pm.readPixelsToBuffer(rgba);
-    const px = new Uint8Array(rgba);
+    const readbackMs: number = this.nowMs() - tRead;
 
-    // RGBA(HWC) → NCHW，并归一化到 0~1
+    const tLoop: number = this.nowMs();
     const plane: number = MODEL_SIZE * MODEL_SIZE;
     const out = new Float32Array(3 * plane);
+    const px = new Uint8Array(rgba);
 
-    for (let i = 0; i < plane; i++) {
-      const o = i * 4;
-      // R 通道 → 第 0 平面
-      out[i] = px[o] / 255.0;
-      // G 通道 → 第 1 平面
-      out[plane + i] = px[o + 1] / 255.0;
-      // B 通道 → 第 2 平面
-      out[2 * plane + i] = px[o + 2] / 255.0;
+    if (this.convertVariant === 1) {
+      // ── 变体 1：Uint32 整体读 + 位运算 + 乘法 ──
+      const u32 = new Uint32Array(rgba);
+      const inv: number = 1.0 / 255.0;
+      for (let i = 0; i < plane; i++) {
+        const v: number = u32[i];               // 小端：低字节 = R
+        out[i] = (v & 0xFF) * inv;
+        out[plane + i] = ((v >>> 8) & 0xFF) * inv;
+        out[2 * plane + i] = ((v >>> 16) & 0xFF) * inv;
+      }
+    } else if (this.convertVariant === 2) {
+      // ── 变体 2：查表法（循环内只有查表与写入） ──
+      const lut: Float32Array = MindSporeLiteDetector.LUT;
+      for (let i = 0; i < plane; i++) {
+        const o: number = i * 4;
+        out[i] = lut[px[o]];
+        out[plane + i] = lut[px[o + 1]];
+        out[2 * plane + i] = lut[px[o + 2]];
+      }
+    } else {
+      // ── 变体 0：原实现（保持原样，作为基线） ──
+      for (let i = 0; i < plane; i++) {
+        const o: number = i * 4;
+        out[i] = px[o] / 255.0;
+        out[plane + i] = px[o + 1] / 255.0;
+        out[2 * plane + i] = px[o + 2] / 255.0;
+      }
     }
-    return out.buffer as ArrayBuffer;
+    const loopMs: number = this.nowMs() - tLoop;
+
+    return { input: out.buffer as ArrayBuffer, readbackMs: readbackMs, loopMs: loopMs };
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -655,9 +744,36 @@ export class MindSporeLiteDetector implements Detector {
       return -1;
     }
     inputs[0].setData(this.benchInput);   // 喂数据不计入计时（两后端一致，不偏袒任一方）
-    const t: number = Date.now();
+    const t: number = this.nowMs();
     await this.model.predict(inputs);
-    return Date.now() - t;
+    return this.nowMs() - t;
+  }
+
+  /**
+   * 同 benchInfer，但计时窗**包含读取输出张量**（getData()）。
+   *
+   * 为什么需要它：`predict()` 返回 Promise，若它在 NPU 真正算完之前就 resolve，
+   * 那么 benchInfer 测到的只是"派发耗时"，会系统性低估真实推理成本。
+   * 两条口径都测，差值即"派发与完成之间"的隐藏成本；若两者接近，说明计时可信。
+   */
+  async benchInferWithOutput(): Promise<number> {
+    if (this.model === undefined || this.benchInput === undefined) {
+      return -1;
+    }
+    const inputs: mindSporeLite.MSTensor[] | undefined = this.model.getInputs();
+    if (inputs === undefined || inputs.length === 0) {
+      return -1;
+    }
+    inputs[0].setData(this.benchInput);
+    const t: number = this.nowMs();
+    const outputs: mindSporeLite.MSTensor[] = await this.model.predict(inputs);
+    if (outputs !== undefined && outputs.length > 0) {
+      const data: ArrayBuffer = outputs[0].getData();   // 真正物化输出（含同步等待）
+      if (data.byteLength === 0) {
+        return -1;
+      }
+    }
+    return this.nowMs() - t;
   }
 
   async release(): Promise<void> {

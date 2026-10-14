@@ -111,6 +111,10 @@ export interface DetectionResult {
   decodeMs?: number;
   /** RGBA→NCHW 转换耗时（ms），仅真实检测器提供 */
   convertMs?: number;
+  /** convertMs 的第①段：readPixelsToBuffer（像素回读，等待解码/回读完成）耗时（ms） */
+  readbackMs?: number;
+  /** convertMs 的第②段：ArkTS 逐像素循环写入 NCHW 的耗时（ms） */
+  loopMs?: number;
   /** NMS 后处理耗时（ms），仅真实检测器提供 */
   nmsMs?: number;
 }

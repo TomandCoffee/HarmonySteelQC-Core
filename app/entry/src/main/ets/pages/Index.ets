@@ -638,15 +638,18 @@ struct Index {
   // ---------- 基准测试 ----------
 
   /**
-   * 一键跑基准套件（约 4 分钟）
+   * 一键跑基准套件 v2
+   *
+   * @param quick true = 快速模式（约 1 分钟）：跳过空闲扫描 / 大图 / 批量 / 复测；
+   *              false = 完整模式（约 9 分钟）：P0–P11 全跑
    *
    * ⚠️ 运行期间请保持屏幕常亮、不要切后台、不要锁屏：
    *    定时器与推理都会被系统节流，P4 空闲间隔扫描会因此失真。
    * 结果全部走 hilog（TAG = STEELQC_BENCH），抓取命令：
-   *    hilog -r            ← 开始前清一次缓冲
-   *    hilog -x -T STEELQC_BENCH   ← 跑完后取结果
+   *    hilog -r                     ← 开始前清一次缓冲
+   *    hilog -x -T STEELQC_BENCH    ← 跑完后取结果
    */
-  private async startBench(): Promise<void> {
+  private async startBench(quick: boolean): Promise<void> {
     if (this.benchRunning) {
       return;
     }
@@ -675,8 +678,8 @@ struct Index {
         }
       });
     try {
-      await this.benchRunner.run();
-      this.statusText = '基准测试完成，结果见 hilog（TAG=STEELQC_BENCH）';
+      await this.benchRunner.run(quick);
+      this.statusText = `基准测试完成（${quick ? '快速' : '完整'}），结果见 hilog（TAG=STEELQC_BENCH）`;
     } catch (err) {
       const e = err as BusinessError;
       this.statusText = `基准测试异常：${e.message}`;
@@ -1063,15 +1066,26 @@ struct Index {
       }
       .width('100%')
 
-      // 第三行：基准测试（一键跑完整套件，结果走 hilog）
+      // 第三行：基准测试（快速 / 完整两种模式，结果都走 hilog）
       Row({ space: 8 }) {
-        Button(this.benchRunning ? '🧪 测试中…（约 4 分钟）' : '🧪 跑基准测试（约 4 分钟）')
+        Button(this.benchRunning ? '⚡ 测试中…' : '⚡ 快速测试（约 1 分钟）')
           .layoutWeight(1)
           .height(42)
+          .fontSize(13)
+          .backgroundColor('#13C2C2')
+          .enabled(!this.benchRunning && !this.detecting)
+          .onClick(() => {
+            this.startBench(true);
+          })
+
+        Button(this.benchRunning ? '🧪 测试中…' : '🧪 完整测试（约 9 分钟）')
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(13)
           .backgroundColor('#722ED1')
           .enabled(!this.benchRunning && !this.detecting)
           .onClick(() => {
-            this.startBench();
+            this.startBench(false);
           })
       }
       .width('100%')

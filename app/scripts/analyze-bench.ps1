@@ -64,6 +64,14 @@ function Get-Stat($values) {
 
 $env = @{}; $init = @{}; $warm = @{}; $steady = @{}; $idle = @{}
 $block = @(); $e2e = @(); $cons = @(); $consSum = @{}; $thread = @()
+# v2 新增的记录类型
+$repeat = @{}          # REPEATRAW
+$outread = @{}         # OUTREAD <tag> kind=plain|withOutput n=.. med=..
+$idleSum = @{}         # IDLESUM <tag> gapSec=.. n=.. med=..
+$e2eSum = @{}          # E2ESUM n=.. decode_med=.. readback_med=.. looop_med=.. infer_med=.. nms_med=.. total_med=..
+$variant = @()         # VAR variant=.. n=.. convert_med=.. readback_med=.. loop_med=..
+$big = @()             # BIG img=WxH n=.. decode_med=.. convert_med=.. infer_med=.. total_med=..
+$batch = @{}           # BATCH n=.. totalMs=.. avgMs=.. perSec=..
 
 foreach ($msg in $msgs) {
     if ($msg -match '^ENV\s+(.*)$') {
@@ -74,7 +82,7 @@ foreach ($msg in $msgs) {
     elseif ($msg -match '^INIT backend=(\S+) ok=(\S+) initMs=(\d+)') {
         $init[$Matches[1]] = [pscustomobject]@{ Ok = $Matches[2]; Ms = [int]$Matches[3] }
     }
-    elseif ($msg -match '^WARM (\S+) i=(\d+) infer=(-?\d+)') {
+    elseif ($msg -match '^WARM (\S+) i=(\d+) infer=(-?[\d.]+)') {
         $tag = $Matches[1]
         if (-not $warm.ContainsKey($tag)) { $warm[$tag] = New-Object System.Collections.Generic.List[double] }
         $warm[$tag].Add([double]$Matches[3])
@@ -82,18 +90,59 @@ foreach ($msg in $msgs) {
     elseif ($msg -match '^STEADYRAW (\S+) values=(.*)$') {
         $steady[$Matches[1]] = Get-Nums $Matches[2]
     }
-    elseif ($msg -match '^IDLE (\S+) gapSec=([\d.]+) infer=(-?\d+)') {
+    elseif ($msg -match '^REPEATRAW (\S+) values=(.*)$') {
+        $repeat[$Matches[1]] = Get-Nums $Matches[2]
+    }
+    elseif ($msg -match '^OUTREAD (\S+) kind=(\S+) n=(\d+) med=(-?[\d.]+)') {
+        if (-not $outread.ContainsKey($Matches[1])) { $outread[$Matches[1]] = @{} }
+        $outread[$Matches[1]][$Matches[2]] = [double]$Matches[4]
+    }
+    elseif ($msg -match '^IDLE (\S+) gapSec=([\d.]+)(?: iter=(\d+))? infer=(-?[\d.]+)') {
         if (-not $idle.ContainsKey($Matches[1])) { $idle[$Matches[1]] = @{} }
-        $idle[$Matches[1]][[double]$Matches[2]] = [double]$Matches[3]
+        $g = [double]$Matches[2]
+        if ($idle[$Matches[1]].ContainsKey($g)) {
+            # v2：同一档有多次 → 收集为数组，供中位数使用
+            $cur = $idle[$Matches[1]][$g]
+            if ($cur -is [double]) { $idle[$Matches[1]][$g] = @([double]$cur, [double]$Matches[4]) }
+            else { $idle[$Matches[1]][$g] = @($cur) + [double]$Matches[4] }
+        }
+        else { $idle[$Matches[1]][$g] = [double]$Matches[4] }
+    }
+    elseif ($msg -match '^IDLESUM (\S+) gapSec=([\d.]+) n=(\d+) med=(-?[\d.]+)') {
+        if (-not $idleSum.ContainsKey($Matches[1])) { $idleSum[$Matches[1]] = @{} }
+        $idleSum[$Matches[1]][[double]$Matches[2]] = [double]$Matches[4]
     }
     elseif ($msg -match '^BLOCK round=(\d+) (\S+) .*values=(.*)$') {
         $block += [pscustomobject]@{ Round = [int]$Matches[1]; Tag = $Matches[2]; Values = (Get-Nums $Matches[3]) }
     }
-    elseif ($msg -match '^E2E img=(\S+) decode=(-?\d+) convert=(-?\d+) infer=(-?\d+) nms=(-?\d+) total=(-?\d+) boxes=(\d+)') {
+    elseif ($msg -match '^E2E img=(\S+) decode=(-?[\d.]+) readback=(-?[\d.]+) loop=(-?[\d.]+) infer=(-?[\d.]+) nms=(-?[\d.]+) total=(-?[\d.]+) boxes=(\d+)') {
         $e2e += [pscustomobject]@{
-            Img = $Matches[1]; Decode = [int]$Matches[2]; Convert = [int]$Matches[3]
-            Infer = [int]$Matches[4]; Nms = [int]$Matches[5]; Total = [int]$Matches[6]; Boxes = [int]$Matches[7]
+            Img = $Matches[1]; Decode = [double]$Matches[2]; Readback = [double]$Matches[3]
+            Loop = [double]$Matches[4]; Infer = [double]$Matches[5]; Nms = [double]$Matches[6]
+            Total = [double]$Matches[7]; Boxes = [int]$Matches[8]
         }
+    }
+    elseif ($msg -match '^E2ESUM n=(\d+) decode_med=(-?[\d.]+) readback_med=(-?[\d.]+) loop_med=(-?[\d.]+) infer_med=(-?[\d.]+) nms_med=(-?[\d.]+) total_med=(-?[\d.]+)') {
+        $e2eSum = @{
+            N = [int]$Matches[1]; Decode = [double]$Matches[2]; Readback = [double]$Matches[3]
+            Loop = [double]$Matches[4]; Infer = [double]$Matches[5]; Nms = [double]$Matches[6]
+            Total = [double]$Matches[7]
+        }
+    }
+    elseif ($msg -match '^VAR variant=(\d+) n=(\d+) convert_med=(-?[\d.]+) readback_med=(-?[\d.]+) loop_med=(-?[\d.]+)') {
+        $variant += [pscustomobject]@{
+            Variant = [int]$Matches[1]; N = [int]$Matches[2]; Convert = [double]$Matches[3]
+            Readback = [double]$Matches[4]; Loop = [double]$Matches[5]
+        }
+    }
+    elseif ($msg -match '^BIG img=(\S+) n=(\d+) decode_med=(-?[\d.]+) convert_med=(-?[\d.]+) infer_med=(-?[\d.]+) total_med=(-?[\d.]+)') {
+        $big += [pscustomobject]@{
+            Img = $Matches[1]; N = [int]$Matches[2]; Decode = [double]$Matches[3]
+            Convert = [double]$Matches[4]; Infer = [double]$Matches[5]; Total = [double]$Matches[6]
+        }
+    }
+    elseif ($msg -match '^BATCH n=(\d+) totalMs=(\d+) avgMs=([\d.]+) perSec=([\d.]+)') {
+        $batch = @{ N = [int]$Matches[1]; TotalMs = [int]$Matches[2]; AvgMs = [double]$Matches[3]; PerSec = [double]$Matches[4] }
     }
     elseif ($msg -match '^CONS img=(\S+) same=(\S+) A=(.*) B=(.*)$') {
         $cons += [pscustomobject]@{ Img = $Matches[1]; Same = $Matches[2]; A = $Matches[3]; B = $Matches[4] }
@@ -139,6 +188,14 @@ foreach ($k in $steady.Keys) {
 }
 
 Write-Head 'P4 空闲间隔衰减（间隔 → 纯推理 ms）'
+# v2 每档多次测量 → 取中位；v1 只有一个值，也走同一路径
+function Median-Of($v) {
+    if ($null -eq $v) { return $null }
+    if ($v -is [double] -or $v -is [int]) { return [double]$v }
+    $arr = @($v | Sort-Object)
+    if ($arr.Count -eq 0) { return $null }
+    return [double]$arr[[int][math]::Floor($arr.Count / 2)]
+}
 $gaps = @()
 foreach ($k in $idle.Keys) { foreach ($g in $idle[$k].Keys) { if ($gaps -notcontains $g) { $gaps += $g } } }
 $gaps = $gaps | Sort-Object
@@ -147,18 +204,33 @@ if ($gaps.Count -gt 0) {
     Write-Host $hdr
     foreach ($g in $gaps) {
         $row = ('  {0,-6}' -f $g)
-        foreach ($k in $idle.Keys) { $row += if ($idle[$k].ContainsKey($g)) { '{0,10}' -f $idle[$k][$g] } else { '{0,10}' -f '-' } }
+        foreach ($k in $idle.Keys) {
+            if ($idle[$k].ContainsKey($g)) {
+                $m = Median-Of $idle[$k][$g]
+                $row += ('{0,10}' -f ([math]::Round($m, 2)))
+            }
+            else { $row += ('{0,10}' -f '-') }
+        }
         Write-Host $row
     }
     foreach ($k in $idle.Keys) {
-        $base = $idle[$k][0.5]
+        $base = Median-Of $idle[$k][0.5]
         if ($null -ne $base -and $base -gt 0) {
             foreach ($g in $gaps) {
                 if ($g -ne 0.5 -and $idle[$k].ContainsKey($g)) {
-                    Write-Host ("  {0}: 间隔 {1}s 相对 0.5s 慢 {2}x" -f $k, $g, [math]::Round($idle[$k][$g] / $base, 2)) -ForegroundColor DarkGray
+                    $m = Median-Of $idle[$k][$g]
+                    Write-Host ("  {0}: 间隔 {1}s 相对 0.5s 慢 {2}x" -f $k, $g, [math]::Round($m / $base, 2)) -ForegroundColor DarkGray
                 }
             }
         }
+    }
+}
+if ($idleSum.Keys.Count -gt 0) {
+    Write-Host '  （IDLESUM 汇总，与上表应一致）' -ForegroundColor DarkGray
+    foreach ($k in $idleSum.Keys) {
+        $parts = @()
+        foreach ($g in ($idleSum[$k].Keys | Sort-Object)) { $parts += ("gap{0}s={1}" -f $g, [math]::Round($idleSum[$k][$g], 2)) }
+        Write-Host ("    {0,-5} {1}" -f $k, ($parts -join '  '))
     }
 }
 
@@ -186,21 +258,93 @@ if ($block.Count -gt 0) {
 
 Write-Head 'P6 端到端分段（nnrt）'
 if ($e2e.Count -gt 0) {
-    Write-Host '  img                      decode convert infer  nms  total  boxes'
+    Write-Host '  img                    decode readback  loop infer  nms  total boxes'
     foreach ($e in $e2e) {
-        Write-Host ("  {0,-24} {1,6} {2,7} {3,5} {4,5} {5,6} {6,6}" -f $e.Img, $e.Decode, $e.Convert, $e.Infer, $e.Nms, $e.Total, $e.Boxes)
+        Write-Host ("  {0,-22} {1,6} {2,8} {3,5} {4,5} {5,5} {6,5} {7,5}" -f $e.Img, $e.Decode, $e.Readback, $e.Loop, $e.Infer, $e.Nms, $e.Total, $e.Boxes)
     }
     $tD = ($e2e | Measure-Object Decode -Average).Average
     $tC = ($e2e | Measure-Object Convert -Average).Average
+    $tR = ($e2e | Measure-Object Readback -Average).Average
+    $tL = ($e2e | Measure-Object Loop -Average).Average
     $tI = ($e2e | Measure-Object Infer -Average).Average
     $tN = ($e2e | Measure-Object Nms -Average).Average
     $tT = ($e2e | Measure-Object Total -Average).Average
     if ($tT -gt 0) {
         Write-Host ''
-        Write-Host ("  平均占比：decode {0}%  convert {1}%  infer {2}%  nms {3}%" -f `
-            [math]::Round($tD / $tT * 100, 1), [math]::Round($tC / $tT * 100, 1), `
-            [math]::Round($tI / $tT * 100, 1), [math]::Round($tN / $tT * 100, 1)) -ForegroundColor Green
-        Write-Host ("  推理只占 {0}% —— 优化靶子应据此确定" -f [math]::Round($tI / $tT * 100, 1)) -ForegroundColor DarkGray
+        Write-Host ("  平均：decode {0} ms / readback {1} ms / loop {2} ms / infer {3} ms / nms {4} ms / total {5} ms" -f `
+            [math]::Round($tD, 2), [math]::Round($tR, 2), [math]::Round($tL, 2), `
+            [math]::Round($tI, 2), [math]::Round($tN, 2), [math]::Round($tT, 2))
+        Write-Host ("  占比：decode {0}%  readback {1}%  loop {2}%  infer {3}%  nms {4}%" -f `
+            [math]::Round($tD / $tT * 100, 1), [math]::Round($tR / $tT * 100, 1), `
+            [math]::Round($tL / $tT * 100, 1), [math]::Round($tI / $tT * 100, 1), `
+            [math]::Round($tN / $tT * 100, 1)) -ForegroundColor Green
+        Write-Host ("  ★ 优化靶子：readback {0}% vs loop {1}% vs infer {2}% —— 谁大就改谁" -f `
+            [math]::Round($tR / $tT * 100, 1), [math]::Round($tL / $tT * 100, 1), `
+            [math]::Round($tI / $tT * 100, 1)) -ForegroundColor Yellow
+    }
+}
+if ($e2eSum.Count -gt 0) {
+    Write-Host ("  E2ESUM 中位：decode {0} / readback {1} / loop {2} / infer {3} / nms {4} / total {5}（n={6}）" -f `
+        $e2eSum.Decode, $e2eSum.Readback, $e2eSum.Loop, $e2eSum.Infer, $e2eSum.Nms, $e2eSum.Total, $e2eSum.N) -ForegroundColor Green
+}
+
+if ($variant.Count -gt 0) {
+    Write-Host ''
+    Write-Host '  前处理实现变体对比（同机同图交错，取中位）：' -ForegroundColor Cyan
+    Write-Host '    variant  n    convert   readback   loop'
+    foreach ($v in ($variant | Sort-Object Variant)) {
+        Write-Host ("    {0,-8} {1,3} {2,10} {3,10} {4,6}" -f $v.Variant, $v.N, $v.Convert, $v.Readback, $v.Loop)
+    }
+    $base = $variant | Where-Object { $_.Variant -eq 0 }
+    foreach ($v in ($variant | Where-Object { $_.Variant -ne 0 })) {
+        if ($base -and $base.Convert -gt 0) {
+            $gain = [math]::Round(($base.Convert - $v.Convert) / $base.Convert * 100, 1)
+            Write-Host ("    变体{0} 相对变体0 省 {1}% （convert {2} → {3} ms）" -f `
+                $v.Variant, $gain, $base.Convert, $v.Convert) -ForegroundColor Yellow
+        }
+    }
+}
+
+if ($outread.Keys.Count -gt 0) {
+    Write-Host ''
+    Write-Host '  P2b 输出读取口径对照（判定 predict 是否"真算完才 resolve"）：' -ForegroundColor Cyan
+    foreach ($k in $outread.Keys) {
+        $p = $outread[$k]['plain']
+        $w = $outread[$k]['withOutput']
+        if ($null -ne $p -and $null -ne $w) {
+            $diff = [math]::Round($w - $p, 2)
+            $flag = if ([math]::Abs($diff) -le [math]::Max(0.5, $p * 0.15)) { '一致 → 计时可信' } else { '差异明显 → 只测 Promise 会低估' }
+            Write-Host ("    {0,-5} 只等Promise {1,7} ms   读输出 {2,7} ms   差 {3,6} ms   {4}" -f $k, $p, $w, $diff, $flag) -ForegroundColor Green
+        }
+    }
+}
+
+if ($big.Count -gt 0) {
+    Write-Host ''
+    Write-Host '  P9 大图端到端（量化取图分辨率的代价）：' -ForegroundColor Cyan
+    Write-Host '    img           n   decode  convert   infer   total'
+    foreach ($b in $big) {
+        Write-Host ("    {0,-12} {1,3} {2,8} {3,8} {4,8} {5,8}" -f $b.Img, $b.N, $b.Decode, $b.Convert, $b.Infer, $b.Total)
+    }
+}
+
+if ($batch.Count -gt 0) {
+    Write-Host ''
+    Write-Host ("  P10 批量吞吐：{0} 张共 {1} ms，平均 {2} ms/张，{3} 张/秒" -f `
+        $batch.N, $batch.TotalMs, $batch.AvgMs, $batch.PerSec) -ForegroundColor Cyan
+    Write-Host '    （README 声明为"50 张共 1.77 s，平均 35 ms/张"，可据此核对）' -ForegroundColor DarkGray
+}
+
+if ($repeat.Keys.Count -gt 0) {
+    Write-Host ''
+    Write-Host '  P11 会话内稳态复测（检验可重复性）：' -ForegroundColor Cyan
+    foreach ($k in $repeat.Keys) {
+        $s1 = Get-Stat $steady[$k]
+        $s2 = Get-Stat $repeat[$k]
+        if ($null -ne $s1 -and $null -ne $s2) {
+            $drift = if ($s1.Med -gt 0) { [math]::Round(($s2.Med - $s1.Med) / $s1.Med * 100, 1) } else { 0 }
+            Write-Host ("    {0,-5} 首次 med {1} ms → 复测 med {2} ms （漂移 {3}%）" -f $k, $s1.Med, $s2.Med, $drift) -ForegroundColor Green
+        }
     }
 }
 
