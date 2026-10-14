@@ -1,0 +1,74 @@
+# ============================================================
+#  HarmonySteelQC  .gitignore
+#  原则：构建产物、签名材料、本机路径、可再生中间物 一律不入库
+# ============================================================
+
+# ---------- 构建产物 ----------
+**/build/
+.hvigor/
+**/.hvigor/
+.cxx/
+**/.cxx/
+oh_modules/
+**/oh_modules/
+node_modules/
+*.hap
+*.hsp
+*.har
+oh-package-lock.json5
+
+# ---------- 签名材料（⚠️ 含私钥，绝不能提交）----------
+signing/
+*.p12
+*.p7b
+*.cer
+*.csr
+*.keystore
+*.jks
+
+# ---------- 本机相关路径 ----------
+local.properties
+*.local
+
+# ---------- Python 训练环境 ----------
+training/.venv/
+training/venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+
+# ---------- 训练中间产物（体积大，可再生）----------
+training/runs/
+training/weights/
+training/dataset_yolo/
+*.pt
+*.onnx
+*.part
+training/.yolov8*
+
+# ---------- 交付产物：例外放行 ----------
+# 训练好的模型是「数据 → 模型 → 端侧部署」闭环的产物，
+# 入库后他人可直接复现部署，无需重新训练
+!training/export/neu_det_yolov8n.pt
+!training/export/neu_det_yolov8n.onnx
+!training/export/neu_det_yolov8n.ms
+!training/export/export_meta.json
+# 训练基座权重（train.py 的起点）
+!training/yolov8n.pt
+# 评估结果与可视化（结题报告与答辩材料要用）
+!training/results/**
+# NEU-DET 原始数据集（约 27 MB，保留在库内保证可复现）
+!training/dataset/NEU-DET/**
+
+# ---------- IDE ----------
+.idea/
+*.iml
+.vscode/
+
+# ---------- 系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log

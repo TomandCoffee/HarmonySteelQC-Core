@@ -1,0 +1,12 @@
+{
+  "weights": "D:\\HarmonyProjects\\HarmonySteelQC\\training\\runs\\detect\\neu_det_yolov8n\\weights\\best.pt",
+  "onnx": "D:\\HarmonyProjects\\HarmonySteelQC\\training\\runs\\detect\\neu_det_yolov8n\\weights\\best.onnx",
+  "imgsz": 320,
+  "opset": 12,
+  "dynamic": false,
+  "size_mb": 12.066,
+  "verified": true,
+  "max_abs_diff": 0.000152587890625,
+  "input_name": "images",
+  "note": "YOLOv8 ONNX 输出形状为 (batch, 4+nc, num_anchors)，端侧需自行实现 NMS 后处理"
+}

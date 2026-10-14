@@ -1,0 +1,29 @@
+# NEU-DET 钢材表面缺陷检测 —— 训练依赖
+#
+# ⚠️ torch / torchvision 不写在这里！
+#    它们必须从 PyTorch 官方的 cu128 索引安装，否则 RTX 50 系（Blackwell）
+#    会报 "no kernel image is available for execution on the device"。
+#
+#    正确装法：
+#      python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+#    本文件只列其余依赖，用国内镜像装即可。
+
+# YOLO 训练框架
+ultralytics>=8.3.0
+
+# 数据处理与图像
+numpy>=1.26,<3
+opencv-python>=4.9.0
+Pillow>=10.0.0
+PyYAML>=6.0
+
+# 训练可视化与指标
+matplotlib>=3.8.0
+pandas>=2.0.0
+seaborn>=0.13.0
+tqdm>=4.66.0
+
+# 模型导出与验证
+onnx>=1.16.0
+onnxruntime>=1.18.0

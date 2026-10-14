@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "钢材表面缺陷检测"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "钢材质检主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "钢材质检"
+    },
+    {
+      "name": "reason_camera",
+      "value": "用于拍摄钢材表面照片进行缺陷检测"
+    },
+    {
+      "name": "reason_read_image",
+      "value": "用于读取待检测的钢材表面照片"
+    },
+    {
+      "name": "reason_write_image",
+      "value": "用于保存检测结果图片"
+    }
+  ]
+}

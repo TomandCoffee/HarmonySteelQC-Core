@@ -1,0 +1,16 @@
+{
+  "devices": {
+    "general": [
+      "default",
+      "phone",
+      "tablet",
+      "2in1"
+    ]
+  },
+  "development": {
+    "addedSysCaps": [
+      "SystemCapability.AI.MindSporeLite",
+      "SystemCapability.AI.HiAIFoundation"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "app": {
+    // ─────────────────────────────────────────────────────────────
+    // 签名配置留空：证书与口令属于本机私密信息，不进入版本库。
+    //
+    // 配置方法（首次拉取代码后必须做一次，否则无法安装到真机）：
+    //   DevEco Studio → 文件 → 项目结构 → 签名配置
+    //   → 勾选「自动生成签名」→ 确定
+    //   IDE 会向华为申请绑定本机调试设备的证书，并自动写入此字段。
+    // ─────────────────────────────────────────────────────────────
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        // 版本号里的括号决定运行时类型，规则来自 hvigor 源码：
+        //   compatibleSdkVersion 含 "("  → HarmonyOS（华为设备）
+        //   纯数字（如 24）              → OpenHarmony
+        // 本项目的目标设备是华为平板，必须用带括号的写法。
+        "compatibleSdkVersion": "6.1.1(24)",
+        "targetSdkVersion": "6.1.1(24)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "model": "yolov8n.pt",
+  "imgsz": 320,
+  "batch": 16,
+  "epochs_requested": 150,
+  "patience": 30,
+  "seed": 42,
+  "classes": [
+    "crazing",
+    "inclusion",
+    "patches",
+    "pitted_surface",
+    "rolled-in_scale",
+    "scratches"
+  ],
+  "class_box_counts": {
+    "crazing": 689,
+    "inclusion": 1011,
+    "patches": 881,
+    "pitted_surface": 432,
+    "rolled-in_scale": 628,
+    "scratches": 548
+  },
+  "save_dir": "D:\\HarmonyProjects\\HarmonySteelQC\\training\\runs\\detect\\neu_det_yolov8n",
+  "best_epoch": 115,
+  "mAP50": 0.76604,
+  "mAP50_95": 0.42891,
+  "precision": 0.6988,
+  "recall": 0.73779,
+  "best_weights": "D:\\HarmonyProjects\\HarmonySteelQC\\training\\runs\\detect\\neu_det_yolov8n\\weights\\best.pt",
+  "best_weights_exists": true
+}

@@ -1,0 +1,48 @@
+# 统一换行符处理
+#
+# 背景：Windows 上 git 默认开启 core.autocrlf，会把仓库里的 LF 转成 CRLF 检出，
+# 提交时再转回去。对 XML/JSON/YAML 这类文件本身无害，但会刷屏 3600 条警告：
+#   "LF will be replaced by CRLF the next time Git touches it"
+#
+# 更麻烦的是真实风险：如果某个文件被以 CRLF 提交，在 Linux/macOS 上拉取后
+# Python 脚本可能因 \r 报语法错误，XML 解析也可能出问题。
+#
+# 这里显式声明：仓库内部一律存 LF，不依赖各机器的 autocrlf 设置。
+
+# 默认：由 git 自动判断，文本文件存 LF
+* text=auto eol=lf
+
+# 明确按文本处理（这些文件必须是 LF）
+*.py      text eol=lf
+*.md      text eol=lf
+*.json    text eol=lf
+*.json5   text eol=lf
+*.xml     text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.txt     text eol=lf
+*.ets     text eol=lf
+*.ts      text eol=lf
+*.ps1     text eol=lf
+*.gitignore text eol=lf
+
+# 二进制文件：禁止任何换行符转换
+*.jpg     binary
+*.jpeg    binary
+*.png     binary
+*.gif     binary
+*.ico     binary
+*.pt      binary
+*.onnx    binary
+*.ms      binary
+*.p12     binary
+*.p7b     binary
+*.cer     binary
+*.hap     binary
+
+# 数据集图片的文本标注（YOLO 格式）也按文本处理
+training/dataset_yolo/labels/**  text eol=lf
+
+# 让 git 在 diff 时不把二进制当文本
+*.jpg     -diff
+*.png     -diff

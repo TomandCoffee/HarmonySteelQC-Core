@@ -1,0 +1,15 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "钢材表面缺陷检测主模块",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    // ⚠️ NPU 诊断探针的 NAPI 模块（诊断用，非业务逻辑）
+    // 对应 native 产物 libs/arm64-v8a/libnnrtprobe.so
+    // 类型声明在 src/main/cpp/types/libnnrtprobe/Index.d.ts
+    "libnnrtprobe.so": "file:./src/main/cpp/types/libnnrtprobe"
+  }
+}

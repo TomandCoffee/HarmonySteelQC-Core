@@ -1,0 +1,13 @@
+# 本机 SDK 路径配置（此文件已被 .gitignore 排除，请按自己的安装位置修改）
+#
+# DevEco Studio 默认安装位置：
+#   C:\Program Files\Huawei\DevEco Studio\sdk
+#
+# 注意：
+#   1. 路径用双反斜杠或正斜杠
+#   2. 命令行构建时 hvigor 实际读取的是环境变量 DEVECO_SDK_HOME，
+#      本文件仅对 DevEco Studio IDE 生效
+#   3. 工程路径不能含中文，否则 hvigor 会直接拒绝构建
+
+sdk.dir=D:\\DevEco Studio\\sdk
+nodejs.dir=D:\\DevEco Studio\\tools\\node
