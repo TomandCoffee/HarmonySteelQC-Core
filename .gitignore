@@ -19,6 +19,8 @@ oh-package-lock.json5
 
 # ---------- 签名材料（⚠️ 含私钥，绝不能提交）----------
 signing/
+# 构建脚本读取的签名配置（含口令），只保留 .example 模板
+app/signing.config.json
 *.p12
 *.p7b
 *.cer

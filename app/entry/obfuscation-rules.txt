@@ -1,0 +1,33 @@
+# ============================================================
+#  混淆规则文件（模块级）
+#
+#  ⚠️ 为什么这个文件是"补回来"的：
+#     entry/build-profile.json5 的 release 构建选项里引用了
+#         "files": ["./obfuscation-rules.txt"]
+#     但交付版仓库里漏掉了这个文件，导致 release 构建直接失败：
+#         00304036 Not Found
+#         The obfuscation rule file './obfuscation-rules.txt' cannot be found
+#     而 AGC 云调试只接受 release 签名的包 —— 也就是说缺这个空文件，
+#     云调试这条路根本走不通。内容取自 DevEco Studio 新建工程的默认模板。
+#
+#  当前状态：entry/build-profile.json5 里 "obfuscation.enable" = false，
+#           即本文件内容暂不生效；保留它是为了 release 构建能找到该文件，
+#           以及将来真要开混淆时有规则可依。
+# ============================================================
+
+# Define project specific obfuscation rules here.
+# You can include the obfuscation configuration files in the current module's build-profile.json5.
+#
+# For more details, see
+#   https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/source-obfuscation
+
+# Obfuscation options:
+
+-enable-property-obfuscation
+-enable-toplevel-obfuscation
+-enable-filename-obfuscation
+-enable-export-obfuscation
+
+# Keep options:
+# -keep-property-name
+# -keep-global-name

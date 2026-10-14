@@ -6,10 +6,12 @@
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {
-    // ⚠️ NPU 诊断探针的 NAPI 模块（诊断用，非业务逻辑）
-    // 对应 native 产物 libs/arm64-v8a/libnnrtprobe.so
-    // 类型声明在 src/main/cpp/types/libnnrtprobe/Index.d.ts
-    "libnnrtprobe.so": "file:./src/main/cpp/types/libnnrtprobe"
-  }
+  // ⚠️ 2026-10 修复：原先声明了 NPU 诊断探针的本地依赖
+  //     "libnnrtprobe.so": "file:./src/main/cpp/types/libnnrtprobe"
+  //   但该目录（src/main/cpp/）并未随交付版入库，导致 `ohpm install` 直接失败：
+  //     ohpm ERROR: Fetch local folder package error, ...\libnnrtprobe does not exist
+  //   而 DevEco Studio 打开工程时会自动跑 ohpm install —— 即仓库在别人机器上
+  //   连「工程同步」都过不去。实际 ArkTS 代码从未 import 该模块（探针已被
+  //   MindSporeLiteDetector 内部的 nnrt 枚举逻辑取代），故移除。
+  "dependencies": {}
 }

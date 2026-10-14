@@ -1,0 +1,33 @@
+{
+  // ───────────────────────────────────────────────────────────────
+  //  HarmonySteelQC 签名配置模板
+  //
+  //  用法：
+  //    复制本文件为 app/signing.config.json，填入真实值，
+  //    然后执行：  pwsh app\scripts\build-hap.ps1 -Mode release -Sign
+  //
+  //  为什么用外部文件而不是直接写进 build-profile.json5：
+  //    app/build-profile.json5 是**被 git 跟踪**的，DevEco 的
+  //    「自动签名 / Signing Configs」会把路径和口令明文写进去，
+  //    一次 git add . 就可能把私钥口令推到公开仓库。
+  //    本文件已在 .gitignore 中排除；构建脚本只在构建期间注入，
+  //    构建结束后自动把 build-profile.json5 还原成空配置。
+  // ───────────────────────────────────────────────────────────────
+
+  // 从 AGC 下载的证书链文件（.cer）
+  "certpath": "C:\\Users\\<用户名>\\.ohos\\config\\SteelQC_release.cer",
+
+  // AGC 下载的 Profile 文件（.p7b）；云调试需要「发布」类型
+  "profile": "C:\\Users\\<用户名>\\.ohos\\config\\SteelQC_release.p7b",
+
+  // DevEco 生成的密钥库（.p12）与它的口令、别名
+  // （Build → Generate Key and CSR 时你自己设置的那一套）
+  "storeFile": "C:\\Users\\<用户名>\\.ohos\\config\\SteelQC.p12",
+  "storePassword": "<密钥库口令>",
+
+  "keyAlias": "<密钥别名>",
+  "keyPassword": "<密钥口令>",
+
+  // 华为签名算法，保持默认即可
+  "signAlg": "SHA256withECDSA"
+}
