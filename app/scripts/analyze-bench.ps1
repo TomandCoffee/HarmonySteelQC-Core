@@ -115,15 +115,30 @@ foreach ($msg in $msgs) {
     elseif ($msg -match '^BLOCK round=(\d+) (\S+) .*values=(.*)$') {
         $block += [pscustomobject]@{ Round = [int]$Matches[1]; Tag = $Matches[2]; Values = (Get-Nums $Matches[3]) }
     }
-    elseif ($msg -match '^E2E img=(\S+) decode=(-?[\d.]+) readback=(-?[\d.]+) loop=(-?[\d.]+) infer=(-?[\d.]+) nms=(-?[\d.]+) total=(-?[\d.]+) boxes=(\d+)') {
+    elseif ($msg -match '^E2E backend=(\S+) img=(\S+) decode=(-?[\d.]+) readback=(-?[\d.]+) loop=(-?[\d.]+) infer=(-?[\d.]+) nms=(-?[\d.]+) total=(-?[\d.]+) boxes=(\d+)') {
         $e2e += [pscustomobject]@{
-            Img = $Matches[1]; Decode = [double]$Matches[2]; Readback = [double]$Matches[3]
-            Loop = [double]$Matches[4]; Infer = [double]$Matches[5]; Nms = [double]$Matches[6]
-            Total = [double]$Matches[7]; Boxes = [int]$Matches[8]
+            Backend = $Matches[1]; Img = $Matches[2]; Decode = [double]$Matches[3]
+            Readback = [double]$Matches[4]; Loop = [double]$Matches[5]; Infer = [double]$Matches[6]
+            Nms = [double]$Matches[7]; Total = [double]$Matches[8]; Boxes = [int]$Matches[9]
+        }
+    }
+    elseif ($msg -match '^E2E img=(\S+) decode=(-?[\d.]+) readback=(-?[\d.]+) loop=(-?[\d.]+) infer=(-?[\d.]+) nms=(-?[\d.]+) total=(-?[\d.]+) boxes=(\d+)') {
+        # 兼容第 2 轮（当时 E2E 只跑 nnrt，不带 backend= 字段）
+        $e2e += [pscustomobject]@{
+            Backend = 'nnrt'; Img = $Matches[1]; Decode = [double]$Matches[2]
+            Readback = [double]$Matches[3]; Loop = [double]$Matches[4]; Infer = [double]$Matches[5]
+            Nms = [double]$Matches[6]; Total = [double]$Matches[7]; Boxes = [int]$Matches[8]
+        }
+    }
+    elseif ($msg -match '^E2ESUM backend=(\S+) n=(\d+) decode_med=(-?[\d.]+) readback_med=(-?[\d.]+) loop_med=(-?[\d.]+) infer_med=(-?[\d.]+) nms_med=(-?[\d.]+) total_med=(-?[\d.]+)') {
+        $e2eSum[$Matches[1]] = @{
+            N = [int]$Matches[2]; Decode = [double]$Matches[3]; Readback = [double]$Matches[4]
+            Loop = [double]$Matches[5]; Infer = [double]$Matches[6]; Nms = [double]$Matches[7]
+            Total = [double]$Matches[8]
         }
     }
     elseif ($msg -match '^E2ESUM n=(\d+) decode_med=(-?[\d.]+) readback_med=(-?[\d.]+) loop_med=(-?[\d.]+) infer_med=(-?[\d.]+) nms_med=(-?[\d.]+) total_med=(-?[\d.]+)') {
-        $e2eSum = @{
+        $e2eSum['nnrt'] = @{
             N = [int]$Matches[1]; Decode = [double]$Matches[2]; Readback = [double]$Matches[3]
             Loop = [double]$Matches[4]; Infer = [double]$Matches[5]; Nms = [double]$Matches[6]
             Total = [double]$Matches[7]
@@ -256,36 +271,53 @@ if ($block.Count -gt 0) {
     }
 }
 
-Write-Head 'P6 端到端分段（nnrt）'
+Write-Head 'P6 端到端分段（按后端分组）'
 if ($e2e.Count -gt 0) {
-    Write-Host '  img                    decode readback  loop infer  nms  total boxes'
-    foreach ($e in $e2e) {
-        Write-Host ("  {0,-22} {1,6} {2,8} {3,5} {4,5} {5,5} {6,5} {7,5}" -f $e.Img, $e.Decode, $e.Readback, $e.Loop, $e.Infer, $e.Nms, $e.Total, $e.Boxes)
+    $backends = $e2e | Select-Object -ExpandProperty Backend | Sort-Object -Unique
+    $e2eTotals = @{}
+    foreach ($bk in $backends) {
+        $subset = $e2e | Where-Object { $_.Backend -eq $bk }
+        Write-Host ("  [{0}] n={1}" -f $bk, $subset.Count) -ForegroundColor Cyan
+        Write-Host '    img                    decode readback  loop infer  nms  total boxes'
+        foreach ($e in $subset) {
+            Write-Host ("    {0,-20} {1,6} {2,8} {3,5} {4,5} {5,5} {6,6} {7,5}" -f `
+                $e.Img, $e.Decode, $e.Readback, $e.Loop, $e.Infer, $e.Nms, $e.Total, $e.Boxes)
+        }
+        $tD = ($subset | Measure-Object Decode -Average).Average
+        $tR = ($subset | Measure-Object Readback -Average).Average
+        $tL = ($subset | Measure-Object Loop -Average).Average
+        $tI = ($subset | Measure-Object Infer -Average).Average
+        $tN = ($subset | Measure-Object Nms -Average).Average
+        $tT = ($subset | Measure-Object Total -Average).Average
+        $e2eTotals[$bk] = @{ Infer = $tI; Total = $tT }
+        if ($tT -gt 0) {
+            Write-Host ("    平均：decode {0} / readback {1} / loop {2} / infer {3} / nms {4} / total {5} ms" -f `
+                [math]::Round($tD, 2), [math]::Round($tR, 2), [math]::Round($tL, 2), `
+                [math]::Round($tI, 2), [math]::Round($tN, 2), [math]::Round($tT, 2))
+            Write-Host ("    占比：decode {0}%  readback {1}%  loop {2}%  infer {3}%  nms {4}%" -f `
+                [math]::Round($tD / $tT * 100, 1), [math]::Round($tR / $tT * 100, 1), `
+                [math]::Round($tL / $tT * 100, 1), [math]::Round($tI / $tT * 100, 1), `
+                [math]::Round($tN / $tT * 100, 1)) -ForegroundColor Green
+        }
     }
-    $tD = ($e2e | Measure-Object Decode -Average).Average
-    $tC = ($e2e | Measure-Object Convert -Average).Average
-    $tR = ($e2e | Measure-Object Readback -Average).Average
-    $tL = ($e2e | Measure-Object Loop -Average).Average
-    $tI = ($e2e | Measure-Object Infer -Average).Average
-    $tN = ($e2e | Measure-Object Nms -Average).Average
-    $tT = ($e2e | Measure-Object Total -Average).Average
-    if ($tT -gt 0) {
-        Write-Host ''
-        Write-Host ("  平均：decode {0} ms / readback {1} ms / loop {2} ms / infer {3} ms / nms {4} ms / total {5} ms" -f `
-            [math]::Round($tD, 2), [math]::Round($tR, 2), [math]::Round($tL, 2), `
-            [math]::Round($tI, 2), [math]::Round($tN, 2), [math]::Round($tT, 2))
-        Write-Host ("  占比：decode {0}%  readback {1}%  loop {2}%  infer {3}%  nms {4}%" -f `
-            [math]::Round($tD / $tT * 100, 1), [math]::Round($tR / $tT * 100, 1), `
-            [math]::Round($tL / $tT * 100, 1), [math]::Round($tI / $tT * 100, 1), `
-            [math]::Round($tN / $tT * 100, 1)) -ForegroundColor Green
-        Write-Host ("  ★ 优化靶子：readback {0}% vs loop {1}% vs infer {2}% —— 谁大就改谁" -f `
-            [math]::Round($tR / $tT * 100, 1), [math]::Round($tL / $tT * 100, 1), `
-            [math]::Round($tI / $tT * 100, 1)) -ForegroundColor Yellow
+    # ★ 研究问题直答：同机同图下 NPU 相对 CPU 的端到端加速比
+    if ($e2eTotals.ContainsKey('nnrt') -and $e2eTotals.ContainsKey('cpu')) {
+        $n = $e2eTotals['nnrt']; $c = $e2eTotals['cpu']
+        if ($n.Total -gt 0 -and $c.Total -gt 0) {
+            Write-Host ''
+            Write-Host ("  ★ 端到端加速比（同机同图）：nnrt {0} ms vs cpu {1} ms → 总耗时快 {2}x" -f `
+                [math]::Round($n.Total, 2), [math]::Round($c.Total, 2), [math]::Round($c.Total / $n.Total, 2)) -ForegroundColor Yellow
+            Write-Host ("     其中纯推理段：nnrt {0} ms vs cpu {1} ms → {2}x（推理段快，但前后处理把差距摊薄）" -f `
+                [math]::Round($n.Infer, 2), [math]::Round($c.Infer, 2), [math]::Round($c.Infer / [math]::Max(0.01, $n.Infer), 2)) -ForegroundColor Yellow
+        }
     }
 }
 if ($e2eSum.Count -gt 0) {
-    Write-Host ("  E2ESUM 中位：decode {0} / readback {1} / loop {2} / infer {3} / nms {4} / total {5}（n={6}）" -f `
-        $e2eSum.Decode, $e2eSum.Readback, $e2eSum.Loop, $e2eSum.Infer, $e2eSum.Nms, $e2eSum.Total, $e2eSum.N) -ForegroundColor Green
+    foreach ($bk in $e2eSum.Keys) {
+        $s = $e2eSum[$bk]
+        Write-Host ("  E2ESUM[{0}] 中位：decode {1} / readback {2} / loop {3} / infer {4} / nms {5} / total {6}（n={7}）" -f `
+            $bk, $s.Decode, $s.Readback, $s.Loop, $s.Infer, $s.Nms, $s.Total, $s.N) -ForegroundColor Green
+    }
 }
 
 if ($variant.Count -gt 0) {

@@ -408,51 +408,66 @@ export class BenchRunner {
     this.log(`BLOCK round=${round} ${tag} ${this.stat(values)} values=${this.fmt(values)}`);
   }
 
-  /** P6：端到端分段（每类 5 张，共 30 张；nnrt） */
+  /**
+   * P6：端到端分段（每类 5 张，共 30 张）
+   *
+   * ⚠️ 2026-10-14 改动：**两个后端都测**。
+   *   本项目的研究问题是"同一台机器上 NPU 是否实现了加速"，而产品真实用法是
+   *   端到端（解码→转换→推理→NMS）。只测 nnrt 的 e2e 无法回答"换成 CPU 会慢多少"，
+   *   所以这里对同一张图分别走 nnrt 与 cpu，各记一行分段，各自汇总。
+   */
   private async e2eSegments(): Promise<void> {
-    if (this.nnrt === undefined) {
+    if (this.nnrt === undefined || this.cpu === undefined) {
       return;
     }
-    const dec: number[] = [];
-    const rb: number[] = [];
-    const lp: number[] = [];
-    const inf: number[] = [];
-    const nms: number[] = [];
-    const tot: number[] = [];
-    for (let c = 0; c < CLASSES.length; c++) {
-      for (let k = 1; k <= E2E_PER_CLASS; k++) {
-        if (this.stopped) {
-          return;
-        }
-        const name: string = `${CLASSES[c]}_${k}.jpg`;
-        this.notify({ phase: 'P6 端到端', detail: name, line: '' });
-        try {
-          const uri: string = await this.localize(name);
-          const r: DetectionResult = await this.nnrt.detect(uri);
-          const d: number = (r.decodeMs === undefined) ? -1 : r.decodeMs;
-          const a: number = (r.readbackMs === undefined) ? -1 : r.readbackMs;
-          const l: number = (r.loopMs === undefined) ? -1 : r.loopMs;
-          const i: number = r.inferMs;
-          const n: number = (r.nmsMs === undefined) ? -1 : r.nmsMs;
-          const tt: number = r.costMs;
-          dec.push(d);
-          rb.push(a);
-          lp.push(l);
-          inf.push(i);
-          nms.push(n);
-          tot.push(tt);
-          this.log(`E2E img=${name} decode=${d} readback=${a} loop=${l} infer=${i}`
-            + ` nms=${n} total=${tt} boxes=${r.boxes.length}`);
-        } catch (err) {
-          const e = err as BusinessError;
-          this.log(`E2E img=${name} FAILED ${e.message}`);
+    const tags: string[] = ['nnrt', 'cpu'];
+    for (let ti = 0; ti < tags.length; ti++) {
+      const tag: string = tags[ti];
+      const det: MindSporeLiteDetector = (tag === 'nnrt') ? this.nnrt : this.cpu;
+      const dec: number[] = [];
+      const rb: number[] = [];
+      const lp: number[] = [];
+      const inf: number[] = [];
+      const nms: number[] = [];
+      const tot: number[] = [];
+      const cost: number[] = [];
+      for (let c = 0; c < CLASSES.length; c++) {
+        for (let k = 1; k <= E2E_PER_CLASS; k++) {
+          if (this.stopped) {
+            return;
+          }
+          const name: string = `${CLASSES[c]}_${k}.jpg`;
+          this.notify({ phase: 'P6 端到端', detail: `${tag} ${name}`, line: '' });
+          try {
+            const uri: string = await this.localize(name);
+            const r: DetectionResult = await det.detect(uri);
+            const d: number = (r.decodeMs === undefined) ? -1 : r.decodeMs;
+            const a: number = (r.readbackMs === undefined) ? -1 : r.readbackMs;
+            const l: number = (r.loopMs === undefined) ? -1 : r.loopMs;
+            const i: number = r.inferMs;
+            const n: number = (r.nmsMs === undefined) ? -1 : r.nmsMs;
+            const tt: number = r.costMs;
+            dec.push(d);
+            rb.push(a);
+            lp.push(l);
+            inf.push(i);
+            nms.push(n);
+            tot.push(tt);
+            cost.push(tt);
+            this.log(`E2E backend=${tag} img=${name} decode=${d.toFixed(2)} readback=${a.toFixed(2)}`
+              + ` loop=${l.toFixed(2)} infer=${i.toFixed(2)} nms=${n.toFixed(2)}`
+              + ` total=${tt.toFixed(2)} boxes=${r.boxes.length}`);
+          } catch (err) {
+            const e = err as BusinessError;
+            this.log(`E2E backend=${tag} img=${name} FAILED ${e.message}`);
+          }
         }
       }
+      this.log(`E2ESUM backend=${tag} n=${tot.length} decode_med=${this.median(dec).toFixed(2)}`
+        + ` readback_med=${this.median(rb).toFixed(2)} loop_med=${this.median(lp).toFixed(2)}`
+        + ` infer_med=${this.median(inf).toFixed(2)} nms_med=${this.median(nms).toFixed(2)}`
+        + ` total_med=${this.median(tot).toFixed(2)}`);
     }
-    this.log(`E2ESUM n=${tot.length} decode_med=${this.median(dec).toFixed(2)}`
-      + ` readback_med=${this.median(rb).toFixed(2)} loop_med=${this.median(lp).toFixed(2)}`
-      + ` infer_med=${this.median(inf).toFixed(2)} nms_med=${this.median(nms).toFixed(2)}`
-      + ` total_med=${this.median(tot).toFixed(2)}`);
   }
 
   /** P6b：前处理三种实现交错对比（同机、同输入、同图） */
