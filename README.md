@@ -78,10 +78,3 @@ $env:DEVECO_SDK_HOME = "D:\DevEco Studio\sdk"
 ```
 
 详见 [app/README.md](app/README.md)
-
-## 相关仓库
-
-| 仓库 | 内容 |
-|---|---|
-| 本仓库 | 核心代码交付版（应用 + 训练管线） |
-| [HarmonySteelQC（研究过程仓库）](https://github.com/TomandCoffee/HarmonySteelQC) / [Gitee 镜像](https://gitee.com/njyzxt/HarmonySteelQC) | 完整研究过程：实验记录、NPU 论证证据链、错误与修正记录 |
