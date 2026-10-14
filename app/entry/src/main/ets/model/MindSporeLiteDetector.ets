@@ -96,6 +96,12 @@ export class MindSporeLiteDetector implements Detector {
   /** 实际使用的推理后端，实测后回填（'nnrt' 表示走 NPU） */
   private actualTarget: string = 'cpu';
 
+  /** CPU 后端线程数（默认 4；基准测试会扫 2/4/8 做敏感性对比） */
+  private cpuThreads: number = 4;
+
+  /** 基准测试用的固定输入张量：解码一次后复用，避免把解码/转换混进纯推理计时 */
+  private benchInput: ArrayBuffer | undefined = undefined;
+
   /**
    * 强制指定后端（对照实验用）；undefined = 默认行为（先 nnrt 后 cpu 回退）
    *
@@ -108,6 +114,11 @@ export class MindSporeLiteDetector implements Detector {
   constructor(mgr: resourceManager.ResourceManager, forceTarget?: string) {
     this.mgr = mgr;
     this.forceTarget = forceTarget;
+  }
+
+  /** 设置 CPU 后端线程数（只影响 cpu 后端，须在 init() 之前调用） */
+  setCpuThreads(n: number): void {
+    this.cpuThreads = n;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -241,7 +252,7 @@ export class MindSporeLiteDetector implements Detector {
 
       if (target === 'cpu') {
         ctx.cpu = {
-          threadNum: 4,
+          threadNum: this.cpuThreads,
           threadAffinityMode: mindSporeLite.ThreadAffinityMode.NO_AFFINITIES,
           precisionMode: 'preferred_fp16'
         };
@@ -312,9 +323,14 @@ export class MindSporeLiteDetector implements Detector {
     let src: image.ImageSource | undefined = undefined;
     let pm: image.PixelMap | undefined = undefined;
     let file: fileIo.File | undefined = undefined;
+    // 分段打点（供性能剖析：定位瓶颈到底在解码/转换/推理/后处理哪一段）
+    let decodeMs: number = 0;
+    let convertMs: number = 0;
+    let nmsMs: number = 0;
 
     try {
-      // 1. 打开并解码图片
+      // 1. 打开并解码图片（decodeMs 覆盖：打开 + 读图信息 + 解码并按 desiredSize 缩放）
+      const tDecode: number = Date.now();
       file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       src = image.createImageSource(file.fd);
 
@@ -329,9 +345,12 @@ export class MindSporeLiteDetector implements Detector {
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
       };
       pm = await src.createPixelMap(opts);
+      decodeMs = Date.now() - tDecode;
 
       // 3. 读像素 → NCHW float32 [0,1]
+      const tConvert: number = Date.now();
       const inputBuf: ArrayBuffer = await this.toModelInput(pm);
+      convertMs = Date.now() - tConvert;
 
       // 4. 推理
       // getInputs() 必须判空：NPU 后端下它可能返回 undefined
@@ -350,7 +369,9 @@ export class MindSporeLiteDetector implements Detector {
         throw new Error('模型推理未返回输出张量');
       }
       const raw = new Float32Array(outputs[0].getData());
+      const tNms: number = Date.now();
       const boxes: Detection[] = this.postprocess(raw, srcW, srcH);
+      nmsMs = Date.now() - tNms;
 
       hilog.info(DOMAIN, TAG, '推理 %{public}d ms, 检出 %{public}d 个, 原图 %{public}dx%{public}d',
         inferMs, boxes.length, srcW, srcH);
@@ -361,7 +382,10 @@ export class MindSporeLiteDetector implements Detector {
         inferMs: inferMs,
         imageWidth: srcW,
         imageHeight: srcH,
-        backend: `${this.backendName}-${this.actualTarget}`
+        backend: `${this.backendName}-${this.actualTarget}`,
+        decodeMs: decodeMs,
+        convertMs: convertMs,
+        nmsMs: nmsMs
       };
     } finally {
       if (pm !== undefined) {
@@ -560,8 +584,85 @@ export class MindSporeLiteDetector implements Detector {
 
   // ────────────────────────────────────────────────────────────────
 
+  // ────────────────────────────────────────────────────────────────
+  // 基准测试接口（供 BenchRunner 调用）
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * 准备固定输入：解码一次图片并缓存成 [1,3,320,320] float32。
+   *
+   * 为什么要缓存：预热曲线 / 稳态 / 空闲扫描要测的是【纯推理】。
+   * 若每次都走 detect()，两次 predict 之间会夹进解码与 RGBA→NCHW 转换，
+   * 测出来的就不再是纯推理，也无法与「只测 predict」的口径对齐。
+   */
+  async prepareBenchInput(uri: string): Promise<boolean> {
+    if (this.model === undefined) {
+      return false;
+    }
+    let src: image.ImageSource | undefined = undefined;
+    let pm: image.PixelMap | undefined = undefined;
+    let file: fileIo.File | undefined = undefined;
+    try {
+      file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      src = image.createImageSource(file.fd);
+      const opts: image.DecodingOptions = {
+        desiredSize: { width: MODEL_SIZE, height: MODEL_SIZE },
+        editable: false,
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      };
+      pm = await src.createPixelMap(opts);
+      this.benchInput = await this.toModelInput(pm);
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'prepareBenchInput 失败: %{public}s', e.message);
+      return false;
+    } finally {
+      if (pm !== undefined) {
+        try {
+          await pm.release();
+        } catch (e) {
+          // 忽略
+        }
+      }
+      if (src !== undefined) {
+        try {
+          await src.release();
+        } catch (e) {
+          // 忽略
+        }
+      }
+      if (file !== undefined) {
+        try {
+          fileIo.closeSync(file);
+        } catch (e) {
+          // 忽略
+        }
+      }
+    }
+  }
+
+  /**
+   * 用缓存输入跑一次 predict，返回【纯推理】耗时（ms）。
+   * 未准备输入、或拿不到输入张量时返回 -1。
+   */
+  async benchInfer(): Promise<number> {
+    if (this.model === undefined || this.benchInput === undefined) {
+      return -1;
+    }
+    const inputs: mindSporeLite.MSTensor[] | undefined = this.model.getInputs();
+    if (inputs === undefined || inputs.length === 0) {
+      return -1;
+    }
+    inputs[0].setData(this.benchInput);   // 喂数据不计入计时（两后端一致，不偏袒任一方）
+    const t: number = Date.now();
+    await this.model.predict(inputs);
+    return Date.now() - t;
+  }
+
   async release(): Promise<void> {
     this.model = undefined;
+    this.benchInput = undefined;
     this.ready = false;
   }
 }

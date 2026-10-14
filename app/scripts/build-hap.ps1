@@ -80,8 +80,16 @@ function Get-SigningConfig {
     foreach ($f in @('certpath', 'profile', 'storeFile', 'storePassword', 'keyAlias', 'keyPassword')) {
         $v = $cfg.$f
         if ([string]::IsNullOrWhiteSpace($v)) { throw "signing.config.json 字段为空或缺失：$f" }
-        if ($f -in @('certpath', 'profile', 'storeFile') -and -not (Test-Path $v)) {
-            throw "signing.config.json 的 $f 指向的文件不存在：$v"
+        if ($f -in @('certpath', 'profile', 'storeFile')) {
+            # ⚠️ 占位符（如 <用户名>）含路径非法字符，Test-Path 会**抛异常**而不是返回 false，
+            #    直接调用会让用户看到一串 PowerShell 报错。这里包一层，给出可操作的提示。
+            $exists = $false
+            try { $exists = Test-Path -LiteralPath $v -ErrorAction Stop } catch { $exists = $false }
+            if (-not $exists) {
+                throw "signing.config.json 的 $f 指向的文件不存在或路径非法：$v`n" +
+                      "  · 若还没填：请把示例里的 <用户名> 等占位符替换成真实路径`n" +
+                      "  · 若路径含空格/特殊字符：确认已写成双反斜杠（JSON 里 ``\`` 是转义符）"
+            }
         }
     }
     return $cfg

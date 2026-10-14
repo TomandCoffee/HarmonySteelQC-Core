@@ -106,4 +106,11 @@ export interface DetectionResult {
   imageHeight: number;
   /** 本次推理使用的后端，如 Mock / MindSporeLite-NPU */
   backend: string;
+  /** 解码+缩放的耗时（ms）：打开文件 + 读图信息 + 解码并按 desiredSize 缩放。
+   *  仅真实检测器（MindSporeLiteDetector）提供，Mock 不填 —— 用于性能分段剖析。 */
+  decodeMs?: number;
+  /** RGBA→NCHW 转换耗时（ms），仅真实检测器提供 */
+  convertMs?: number;
+  /** NMS 后处理耗时（ms），仅真实检测器提供 */
+  nmsMs?: number;
 }

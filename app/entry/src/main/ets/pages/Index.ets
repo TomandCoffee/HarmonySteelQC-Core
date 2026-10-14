@@ -7,6 +7,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { MockDetector } from '../model/MockDetector';
 import { MindSporeLiteDetector } from '../model/MindSporeLiteDetector';
+import { BenchRunner, BenchProgress } from '../model/BenchRunner';
 import { resourceManager } from '@kit.LocalizationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { picker, fileIo } from '@kit.CoreFileKit';
@@ -46,9 +47,17 @@ interface GalleryClass {
  */
 class GallerySource implements IDataSource {
   private items: string[] = [];
+  private listeners: DataChangeListener[] = [];
 
   setItems(list: string[]): void {
     this.items = list;
+    // ⚠️ 必须通过监听器通知 LazyForEach 重载：
+    //    仅替换数据源对象引用，在部分版本上不会触发网格刷新
+    //    （原实现 registerDataChangeListener 为空实现且从不通知，
+    //      导致切换类别时缩略图不变 —— 2026-10-14 真机复现并修复）
+    for (let i = 0; i < this.listeners.length; i++) {
+      this.listeners[i].onDataReloaded();
+    }
   }
 
   totalCount(): number {
@@ -60,9 +69,16 @@ class GallerySource implements IDataSource {
   }
 
   registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) {
+      this.listeners.push(listener);
+    }
   }
 
   unregisterDataChangeListener(listener: DataChangeListener): void {
+    const i: number = this.listeners.indexOf(listener);
+    if (i >= 0) {
+      this.listeners.splice(i, 1);
+    }
   }
 }
 
@@ -162,6 +178,14 @@ struct Index {
   /** 真实模型的加载状态说明，显示在界面上 */
   @State modelStatus: string = '正在加载模型…';
 
+  // ---------- 基准测试状态（一键跑套件，结果走 hilog，TAG = STEELQC_BENCH） ----------
+  @State benchRunning: boolean = false;
+  @State benchPhase: string = '';
+  @State benchDetail: string = '';
+  /** 最近若干条测试日志（界面展示，便于截图留档） */
+  @State benchLines: string[] = [];
+  private benchRunner: BenchRunner | undefined = undefined;
+
   // ---------- 生命周期 ----------
   aboutToAppear(): void {
     logDeviceFingerprint();
@@ -223,15 +247,21 @@ struct Index {
   private sortNeuNames(list: string[]): string[] {
     const out: string[] = list.slice();
     out.sort((a: string, b: string): number => {
-      const ai: number = a.indexOf('_');
-      const bi: number = b.indexOf('_');
+      // 类别前缀 = 最后一个 '_' 之前的部分
+      // ⚠️ 不能用第一个 '_'：rolled-in_scale_1.jpg 会被切成 "rolled-in" + "scale_1"，
+      //    后半段 parseInt 得到 NaN，比较函数返回 NaN 会让排序结果不确定（2026-10-14 修复）
+      const ai: number = a.lastIndexOf('_');
+      const bi: number = b.lastIndexOf('_');
       const ap: string = (ai > 0) ? a.substring(0, ai) : a;
       const bp: string = (bi > 0) ? b.substring(0, bi) : b;
       if (ap !== bp) {
         return ap < bp ? -1 : 1;
       }
-      const an: number = Number.parseInt(a.substring(ai + 1, a.indexOf('.')));
-      const bn: number = Number.parseInt(b.substring(bi + 1, b.indexOf('.')));
+      const an: number = Number.parseInt(a.substring(ai + 1), 10);
+      const bn: number = Number.parseInt(b.substring(bi + 1), 10);
+      if (Number.isNaN(an) || Number.isNaN(bn)) {
+        return a < b ? -1 : (a > b ? 1 : 0);   // 解析失败退化为字典序，绝不返回 NaN
+      }
       return an - bn;
     });
     return out;
@@ -266,10 +296,11 @@ struct Index {
       }
     }
     this.galleryCount = filtered.length;
-    // 换数据源对象触发 LazyForEach 全量刷新
-    const src: GallerySource = new GallerySource();
-    src.setItems(filtered);
-    this.gallerySource = src;
+    hilog.info(DOMAIN, TAG, '图库筛选: %{public}s → %{public}d 张',
+      prefix === '' ? '全部' : prefix, filtered.length);
+    // 复用同一个数据源实例，靠 setItems 内部的 onDataReloaded 通知刷新
+    // （原实现是新建对象并整体替换，ArkUI 不保证 LazyForEach 会重建，实测不刷新）
+    this.gallerySource.setItems(filtered);
   }
 
   /** 从 rawfile 落盘到沙箱并检测 */
@@ -604,6 +635,65 @@ struct Index {
     return '检出 ' + parts.join('、');
   }
 
+  // ---------- 基准测试 ----------
+
+  /**
+   * 一键跑基准套件（约 4 分钟）
+   *
+   * ⚠️ 运行期间请保持屏幕常亮、不要切后台、不要锁屏：
+   *    定时器与推理都会被系统节流，P4 空闲间隔扫描会因此失真。
+   * 结果全部走 hilog（TAG = STEELQC_BENCH），抓取命令：
+   *    hilog -r            ← 开始前清一次缓冲
+   *    hilog -x -T STEELQC_BENCH   ← 跑完后取结果
+   */
+  private async startBench(): Promise<void> {
+    if (this.benchRunning) {
+      return;
+    }
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (ctx === undefined || ctx.resourceManager === undefined) {
+      this.statusText = '无法获取 resourceManager，基准测试未启动';
+      return;
+    }
+    this.benchRunning = true;
+    this.benchLines = [];
+    this.benchPhase = '准备';
+    this.benchDetail = '';
+    this.benchRunner = new BenchRunner(
+      ctx.resourceManager as resourceManager.ResourceManager,
+      ctx.filesDir,
+      (p: BenchProgress) => {
+        this.benchPhase = p.phase;
+        this.benchDetail = p.detail;
+        if (p.line.length > 0) {
+          const next: string[] = this.benchLines.slice();
+          next.push(p.line);
+          while (next.length > 40) {
+            next.shift();
+          }
+          this.benchLines = next;
+        }
+      });
+    try {
+      await this.benchRunner.run();
+      this.statusText = '基准测试完成，结果见 hilog（TAG=STEELQC_BENCH）';
+    } catch (err) {
+      const e = err as BusinessError;
+      this.statusText = `基准测试异常：${e.message}`;
+      hilog.error(DOMAIN, TAG, 'startBench 异常: %{public}s', e.message);
+    } finally {
+      this.benchRunning = false;
+      this.benchRunner = undefined;
+    }
+  }
+
+  private stopBench(): void {
+    if (this.benchRunner !== undefined) {
+      this.benchRunner.stop();
+      this.benchDetail = '已请求停止（当前阶段跑完即停）';
+    }
+  }
+
   // ---------- 界面 ----------
   build() {
     Column() {
@@ -629,6 +719,9 @@ struct Index {
             this.TestGallery()
           }
           this.ActionButtons()
+          if (this.benchRunning || this.benchLines.length > 0) {
+            this.BenchPanel()
+          }
           if (this.viewMode === 'single' && this.boxes.length > 0) {
             this.ResultList()
           }
@@ -759,9 +852,14 @@ struct Index {
           .borderRadius(8)
 
         // 检测框叠加：按图片实际显示矩形换算坐标
+        // ⚠️ 键值必须包含置信度与坐标：ArkUI 的 ForEach 在键相同时会复用旧组件不重建，
+        //    而叠加框的几何与标签都来自闭包参数（非 @State 绑定），
+        //    键若只含 index+type，"换一张同类缺陷但位置/分数不同"的图会显示上一张的框
+        //    （2026-10-14 修复）
         ForEach(this.boxes, (item: Detection, index: number) => {
           this.BoxOverlay(item, index)
-        }, (item: Detection, index: number) => `box-${index}-${item.type}`)
+        }, (item: Detection, index: number) =>
+          `box-${index}-${item.type}-${item.confidence.toFixed(3)}-${item.x.toFixed(3)}-${item.y.toFixed(3)}`)
       } else {
         Column({ space: 8 }) {
           Text('📷').fontSize(40)
@@ -965,7 +1063,20 @@ struct Index {
       }
       .width('100%')
 
-      // 第三行：结果操作
+      // 第三行：基准测试（一键跑完整套件，结果走 hilog）
+      Row({ space: 8 }) {
+        Button(this.benchRunning ? '🧪 测试中…（约 4 分钟）' : '🧪 跑基准测试（约 4 分钟）')
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#722ED1')
+          .enabled(!this.benchRunning && !this.detecting)
+          .onClick(() => {
+            this.startBench();
+          })
+      }
+      .width('100%')
+
+      // 第四行：结果操作
       Row({ space: 8 }) {
         if (this.batchItems.length > 0 && this.viewMode === 'single') {
           Button('返回列表')
@@ -999,6 +1110,54 @@ struct Index {
       .width('100%')
     }
     .width('100%')
+  }
+
+  /** 基准测试面板：进度 + 最近日志（便于在设备上直接截图留档） */
+  @Builder
+  BenchPanel() {
+    Column({ space: 6 }) {
+      Row() {
+        Text(this.benchRunning ? `🧪 基准测试 · ${this.benchPhase}` : '🧪 基准测试（已结束）')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+        if (this.benchRunning) {
+          Button('停止')
+            .height(26)
+            .fontSize(11)
+            .backgroundColor('#FF4D4F')
+            .onClick(() => {
+              this.stopBench();
+            })
+        }
+      }
+      .width('100%')
+
+      if (this.benchDetail.length > 0) {
+        Text(this.benchDetail).fontSize(11).fontColor('#1F6FEB').width('100%')
+      }
+      Text('结果见 hilog：hilog -x -T STEELQC_BENCH')
+        .fontSize(10)
+        .fontColor('#999999')
+        .width('100%')
+
+      Scroll() {
+        Column({ space: 2 }) {
+          ForEach(this.benchLines, (line: string, index: number) => {
+            Text(line).fontSize(9).fontColor('#666666').width('100%')
+          }, (line: string, index: number) => `bench-${index}-${line}`)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      }
+      .height(170)
+      .width('100%')
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .border({ width: 1, color: '#E0E0E0' })
   }
 
   /** 检测结果列表 */
